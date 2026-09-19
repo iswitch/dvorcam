@@ -1,0 +1,4 @@
+# Combine with compose.smoke.yaml to exercise a camera with an audio track.
+services:
+  feed:
+    command: ['-nostdin', '-v', 'error', '-re', '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=25', '-f', 'lavfi', '-i', 'sine=frequency=1000:sample_rate=48000', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-bf', '0', '-g', '25', '-b:v', '4M', '-minrate', '4M', '-maxrate', '4M', '-bufsize', '4M', '-x264-params', 'nal-hrd=cbr', '-threads', '1', '-c:a', 'aac', '-f', 'rtsp', '-rtsp_transport', 'tcp', 'rtsp://camera:8554/test']

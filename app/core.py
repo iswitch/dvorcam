@@ -1,5 +1,6 @@
 """Persistent state and media configuration shared by the web app and recorder."""
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -69,6 +70,7 @@ def storage_available():
 def media_config(value, paused=False):
     host = os.environ.get('WEBRTC_PUBLIC_HOST') or urlsplit(PUBLIC_URL).hostname
     paths = {}
+    local_permissions = [{'action': 'api'}]
     for cam in value['cameras']:
         cid = cam['id']
         fallback_name = cam.get('fallback_file', cid + '.mp4')
@@ -86,6 +88,13 @@ def media_config(value, paused=False):
         }
         if fallback.is_file():
             paths[cid]['alwaysAvailableFile'] = str(fallback)
+        if cam.get('has_audio', False):
+            # The placeholder and published stream must both contain only H.264.
+            # A source revision restarts the hook when the RTSP address/credentials change.
+            revision = hashlib.sha256(cam['rtsp'].encode()).hexdigest()[:16]
+            paths[cid].update(source='publisher', overridePublisher=False,
+                              runOnInit=f'python /app/relay.py {cid} {revision}', runOnInitRestart=True)
+            local_permissions.append({'action': 'publish', 'path': cid})
     return {
         'logLevel': 'warn', 'logDestinations': ['stdout'],
         'api': True, 'apiAddress': '127.0.0.1:9997',
@@ -97,7 +106,7 @@ def media_config(value, paused=False):
         'webrtcAdditionalHosts': [host], 'webrtcAllowOrigins': [PUBLIC_URL],
         'authInternalUsers': [
             {'user': 'any', 'permissions': [{'action': 'read'}]},
-            {'user': 'any', 'ips': ['127.0.0.1', '::1'], 'permissions': [{'action': 'api'}]},
+            {'user': 'any', 'ips': ['127.0.0.1', '::1'], 'permissions': local_permissions},
         ],
         'pathDefaults': {
             'recordPath': str(ARCHIVE / '%path/%Y-%m-%d_%H-%M-%S-%f'),

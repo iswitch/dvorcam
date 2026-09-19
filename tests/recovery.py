@@ -7,8 +7,9 @@ import time
 from pathlib import Path
 from smoke import fetch
 
-compose = ['docker-compose', '-f', str(Path(__file__).with_name('compose.smoke.yaml'))]
-container = 'dvorcam-smoke-dvorcam-1'
+project = os.environ.get('DVORCAM_TEST_PROJECT', 'dvorcam-smoke')
+compose = ['docker-compose', '-p', project, '-f', str(Path(__file__).with_name('compose.smoke.yaml'))]
+container = project + '-dvorcam-1'
 
 
 def inside(code):

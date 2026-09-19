@@ -256,3 +256,79 @@ def test_snapshot_aliases_share_public_access_and_freshness(installation, cid):
         assert client.get(url).status_code == 404
     for url in ('/', '/admin', '/admin/', '/admin/archive/' + cid + '/'):
         assert client.get(url).status_code == 401
+
+
+@pytest.mark.parametrize('audio_codec', [None, 'aac', 'pcm_alaw'])
+def test_camera_audio_detection_and_offline_edit(installation, monkeypatch, audio_codec):
+    core, web, worker = installation
+    client = web.app.test_client()
+    client.get('/admin/', headers=AUTH)
+    with client.session_transaction() as session:
+        csrf = session['csrf']
+    streams = [{'codec_type': 'video', 'codec_name': 'h264', 'width': 320, 'height': 180,
+                'r_frame_rate': '10/1', 'profile': 'Main', 'has_b_frames': 0}]
+    if audio_codec:
+        streams.append({'codec_type': 'audio', 'codec_name': audio_codec})
+
+    def probe_and_placeholder(args, **kwargs):
+        if args[0] == 'ffprobe':
+            return SimpleNamespace(stdout=json.dumps({'streams': streams}).encode())
+        Path(args[-1]).write_bytes(b'placeholder')
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(web.subprocess, 'run', probe_and_placeholder)
+    form = {'csrf': csrf, 'id': 'camera', 'name': 'Camera', 'rtsp': 'rtsp://camera/live', 'record': 'on'}
+    client.post('/admin/camera', data=form, headers=AUTH)
+    camera = core.state()['cameras'][0]
+    assert camera['has_audio'] is bool(audio_codec)
+    config = core.media_config(core.state())
+    path = config['paths']['camera']
+    assert path['alwaysAvailable'] and not path['alwaysAvailableRecorded']
+    if audio_codec:
+        assert path['source'] == 'publisher' and path['runOnInitRestart']
+        assert config['authInternalUsers'][1]['ips'] == ['127.0.0.1', '::1']
+        assert {'action': 'publish', 'path': 'camera'} in config['authInternalUsers'][1]['permissions']
+        assert all(p['action'] == 'read' for p in config['authInternalUsers'][0]['permissions'])
+    else:
+        assert path['source'] == form['rtsp'] and 'runOnInit' not in path
+
+    def offline(*args, **kwargs):
+        raise AssertionError('Unchanged offline source must not be probed')
+
+    monkeypatch.setattr(web.subprocess, 'run', offline)
+    client.post('/admin/camera', data={'csrf': csrf, 'id': 'camera', 'editing': 'camera', 'name': 'Renamed'}, headers=AUTH)
+    updated = core.state()['cameras'][0]
+    assert updated['has_audio'] == camera['has_audio']
+    assert updated['fallback_file'] == camera['fallback_file']
+    assert updated['name'] == 'Renamed' and not updated['record']
+    client.post('/admin/delete/camera', data={'csrf': csrf}, headers=AUTH)
+    assert core.media_config(core.state())['paths'] == {}
+    assert core.media_config(core.state())['authInternalUsers'][1]['permissions'] == [{'action': 'api'}]
+
+
+def test_audio_relay_source_revision_and_streamcopy(installation, monkeypatch):
+    import hashlib
+    import runpy
+    import sys
+    core, web, worker = installation
+    value = core.state()
+    camera = {'id': 'cam', 'rtsp': 'rtsp://camera/live?channel=1&audio=on', 'record': True, 'has_audio': True}
+    value['cameras'] = [camera]
+    original = core.media_config(value)['paths']['cam']['runOnInit']
+    camera['rtsp'] = 'rtsp://camera/other'
+    assert core.media_config(value)['paths']['cam']['runOnInit'] != original
+    core.atomic_json(core.DATA / 'state.json', value)
+    revision = hashlib.sha256(camera['rtsp'].encode()).hexdigest()[:16]
+    monkeypatch.setattr(sys, 'argv', ['relay.py', 'cam', revision])
+    executed = []
+    monkeypatch.setattr(os, 'execvp', lambda executable, args: executed.append(args))
+    runpy.run_path(str(Path(core.__file__).with_name('relay.py')), run_name='__main__')
+    args = executed[0]
+    assert args[args.index('-i') + 1] == camera['rtsp']
+    assert args[args.index('-c:v') + 1] == 'copy'
+    assert args[args.index('-map') + 1] == '0:v:0' and '-an' in args
+    assert args[-1] == 'rtsp://127.0.0.1:8554/cam'
+    monkeypatch.setattr(sys, 'argv', ['relay.py', 'cam', 'outdated'])
+    with pytest.raises(SystemExit, match='configuration changed'):
+        runpy.run_path(str(Path(core.__file__).with_name('relay.py')), run_name='__main__')
+    assert len(executed) == 1

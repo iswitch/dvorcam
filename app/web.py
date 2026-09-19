@@ -129,8 +129,7 @@ def camera_save():
             videos = [s for s in streams if s['codec_type'] == 'video']
             if len(videos) != 1 or videos[0]['codec_name'] != 'h264' or videos[0].get('has_b_frames', 0):
                 return redirect(url_for('index', error='Для этой версии нужен H.264 без B-кадров. Измените настройки самой камеры'))
-            if any(s['codec_type'] == 'audio' for s in streams):
-                return redirect(url_for('index', error='Первая версия поддерживает видео без звука. Отключите аудио в выбранном потоке камеры'))
+            camera['has_audio'] = any(s['codec_type'] == 'audio' for s in streams)
             video = videos[0]
             rate = float(Fraction(video['r_frame_rate']))
             if not 1 <= rate <= 60 or not 16 <= video['width'] <= 4096 or not 16 <= video['height'] <= 4096:
@@ -155,6 +154,7 @@ def camera_save():
             return redirect(url_for('index', error='Не удалось проверить поток. Проверьте адрес, доступность, пароль и параметры камеры'))
     elif previous.get('video'):
         camera['video'] = previous['video']
+        camera['has_audio'] = previous.get('has_audio', False)
         if previous.get('fallback_file'):
             camera['fallback_file'] = previous['fallback_file']
     with locked():
