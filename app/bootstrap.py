@@ -43,5 +43,10 @@ for path in (ARCHIVE / '.ready', ARCHIVE / '.previews', ARCHIVE / '.snapshots'):
 # A crash can leave a temporary output, never an indexed archive entry.
 for path in (ARCHIVE / '.ready').glob('*.mp4.tmp'):
     path.unlink()
+# A stopped preview job may leave an unpublished JPEG; no worker is running yet.
+for folder in (ARCHIVE / '.previews').iterdir():
+    if folder.is_dir() and not folder.is_symlink():
+        for path in folder.glob('*.tmp.jpg'):
+            path.unlink()
 apply_media(state(), paused=True)
 print('DvorCam initialized; cameras and archive retained', flush=True)

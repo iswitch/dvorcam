@@ -23,6 +23,8 @@ def installation(tmp_path, monkeypatch):
     (core.DATA / 'storage-id').write_text('test-storage')
     (core.ARCHIVE / '.dvorcam-storage').write_text('test-storage')
     core.atomic_json(core.DATA / 'state.json', {'version': 1, 'cameras': [], 'settings': dict(core.DEFAULT_SETTINGS)})
+    import previews
+    importlib.reload(previews)
     import web
     import worker
     importlib.reload(web)

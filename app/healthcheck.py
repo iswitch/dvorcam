@@ -11,3 +11,7 @@ worker = json.loads((DATA / 'worker.json').read_text())
 # Disk pressure is an operational warning, not a reason to repeatedly restart containers.
 if not storage_available() or not worker.get('ok') or time.time() - worker['checked_at'] > 240:
     raise SystemExit(1)
+
+previews = json.loads((DATA / 'preview-worker.json').read_text())
+if time.time() - previews['checked_at'] > 240:
+    raise SystemExit(1)

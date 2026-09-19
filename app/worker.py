@@ -13,6 +13,8 @@ from urllib.request import urlopen
 from core import (DATA, ARCHIVE, CAMERA_ID, SEGMENT_ID, atomic_json, locked,
                   state, storage_available, apply_media, entries)
 
+from previews import make_preview
+
 logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
 
 
@@ -196,17 +198,12 @@ if __name__ == '__main__':
                         modified = snapshot.stat().st_mtime
                         bucket = int(modified // 15) * 15
                         if time.time() - modified < 3 and previous_preview.get(cid) != bucket:
-                            target = ARCHIVE / '.previews' / cid
-                            target.mkdir(exist_ok=True)
-                            temp = target / (str(bucket) + '.tmp.jpg')
-                            result = subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-threads', '1',
-                                '-i', str(snapshot), '-frames:v', '1', '-filter_threads', '1',
-                                '-vf', 'scale=240:135:force_original_aspect_ratio=decrease,pad=240:135:(ow-iw)/2:(oh-ih)/2',
-                                '-q:v', '6', '-y', str(temp)], capture_output=True, timeout=8)
-                            if result.returncode == 0:
-                                os.replace(temp, target / (str(bucket) + '.jpg'))
-                                previous_preview[cid] = bucket
-                            temp.unlink(missing_ok=True)
+                            target = ARCHIVE / '.previews' / cid / (str(bucket) + '.jpg')
+                            try:
+                                if make_preview(snapshot, target):
+                                    previous_preview[cid] = bucket
+                            except (OSError, ValueError):
+                                logging.warning('Live preview failed: %s', cid)
             atomic_json(DATA / 'worker.json', dict(usage, checked_at=time.time(), ok=True, online=list(online), failed_segments=len(failed)))
             # Round-robin one source per camera, including removed cameras' closed recordings.
             for folder in sorted(ARCHIVE.iterdir()):

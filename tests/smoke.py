@@ -2,6 +2,8 @@
 import base64
 import http.cookiejar
 import json
+from io import BytesIO
+from PIL import Image
 import re
 import time
 from urllib.error import HTTPError
@@ -56,3 +58,19 @@ if __name__ == '__main__':
         assert response.status == 206 and len(response.read()) == 100
     assert json.loads(fetch('/api/v1/cameras/synthetic/archive?' + urlencode({'at': clip['start'] + 1})))['selection']['offset_seconds'] == 1
     print('PASS: recording -> close -> verified MP4, metadata, seek offset, HEAD and HTTP Range through Caddy', flush=True)
+
+    for _ in range(30):
+        try:
+            preview = fetch(clip['preview_url'])
+            with Image.open(BytesIO(preview)) as image:
+                image.load()
+                assert image.size == (data['preview']['width'], data['preview']['height'])
+                assert image.width == 240
+            break
+        except HTTPError as error:
+            if error.code != 404:
+                raise
+            time.sleep(2)
+    else:
+        raise SystemExit('Archive preview was not restored')
+    print('PASS: proportional archive preview available through Caddy', flush=True)

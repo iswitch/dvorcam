@@ -18,6 +18,8 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from core import (DATA, ARCHIVE, PUBLIC_URL, CAMERA_ID, SEGMENT_ID, state, locked,
                   atomic_json, storage_available, entries)
 
+from previews import preview_size
+
 app = Flask(__name__)
 # The HTTP port is private; only our gateway forwards these headers.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
@@ -290,6 +292,7 @@ def archive_metadata(cam_id):
             selection = dict(clip, requested_time=at, playback_time=chosen,
                              offset_seconds=chosen - clip["start"], gap_skipped=chosen > at)
             selection["preview_url"] = base + "/preview?" + urlencode({"time": chosen})
+    size = preview_size(camera.get('video', {}).get('width', 16), camera.get('video', {}).get('height', 9))
     return jsonify({"api_version": 1, "playback_mode": "static_segments", "camera_id": cam_id,
                     "recording_enabled": camera.get("record") is True,
                     "has_archive": bool(intervals), "server_time": now, "retention_seconds": retention,
@@ -300,7 +303,7 @@ def archive_metadata(cam_id):
                     "intervals": intervals, "clips": clips, "selection": selection,
                     "video": {"content_type": "video/mp4", "delivery": "static_file", "segment_duration_target": 300,
                               "closed_segments_only": True, "url": base + "/video"},
-                    "preview": {"width": 240, "height": 135, "step_seconds": 15, "url": base + "/preview"}}), 200, {"Cache-Control": "no-store"}
+                    "preview": {"width": size[0], "height": size[1], "step_seconds": 15, "url": base + "/preview"}}), 200, {"Cache-Control": "no-store"}
 
 
 @app.errorhandler(HTTPException)
