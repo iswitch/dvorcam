@@ -1,0 +1,54 @@
+name: dvorcam
+services:
+  dvorcam:
+    image: dvorcam:0.1.0
+    restart: unless-stopped
+    stop_grace_period: 180s
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?Set ADMIN_USERNAME in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      WEBRTC_PUBLIC_HOST: ${WEBRTC_PUBLIC_HOST:-}
+      ARCHIVE_HOST_PATH: ${ARCHIVE_HOST_PATH:-./archive}
+      TZ: UTC
+    volumes:
+      - data:/data
+      - ${ARCHIVE_HOST_PATH:-./archive}:/archive
+    ports:
+      - '8189:8189/udp'
+      - '8189:8189/tcp'
+    healthcheck:
+      test: ['CMD', 'python', '/app/healthcheck.py']
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+  gateway:
+    image: caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb
+    restart: unless-stopped
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+      - caddy_config:/config
+    depends_on:
+      dvorcam:
+        condition: service_healthy
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+volumes:
+  data:
+  certificates:
+  caddy_config:

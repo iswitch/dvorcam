@@ -1,0 +1,19 @@
+{
+    admin off
+    servers {
+        protocols h1 h2
+    }
+}
+{$PUBLIC_URL} {
+    header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet"
+    @application path / /admin /admin/* /api/* /static/* /snapshots/* /healthz
+    handle @application {
+        reverse_proxy dvorcam:9001
+    }
+    # Live delivery only: WHIP publishing is deliberately not routed.
+    @live path_regexp live ^/[A-Za-z0-9_-]+/(whep(/.*)?|reader\.js)?$
+    handle @live {
+        reverse_proxy dvorcam:8889
+    }
+    respond 404
+}

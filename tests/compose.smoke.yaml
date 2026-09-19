@@ -1,0 +1,46 @@
+name: dvorcam-smoke
+services:
+  dvorcam:
+    image: dvorcam:0.1.0
+    environment:
+      PUBLIC_URL: http://localhost:18880
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: local-smoke-only-password
+      WEBRTC_PUBLIC_HOST: dvorcam
+    volumes:
+      - smoke-data:/data
+      - smoke-archive:/archive
+    ports:
+      - '127.0.0.1:19001:9001'
+    healthcheck:
+      test: ['CMD', 'python', '/app/healthcheck.py']
+      interval: 3s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+  gateway:
+    image: caddy:2.10.2
+    environment:
+      PUBLIC_URL: http://:18880
+    volumes:
+      - ../docker/Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - '127.0.0.1:18880:18880'
+  camera:
+    image: bluenviron/mediamtx:1.21.0
+    environment:
+      MTX_HLS: 'no'
+      MTX_RTMP: 'no'
+      MTX_WEBRTC: 'no'
+      MTX_SRT: 'no'
+      MTX_MOQ: 'no'
+  feed:
+    image: dvorcam:0.1.0
+    entrypoint: ffmpeg
+    command: ['-re', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=10', '-c:v', 'libx264', '-bf', '0', '-g', '10', '-threads', '1', '-f', 'rtsp', '-rtsp_transport', 'tcp', 'rtsp://camera:8554/test']
+    depends_on:
+      - camera
+    restart: on-failure
+volumes:
+  smoke-data:
+  smoke-archive:

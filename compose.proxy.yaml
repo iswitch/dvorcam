@@ -1,0 +1,8 @@
+# Optional: TLS is managed by an existing reverse proxy on the same host.
+services:
+  gateway:
+    profiles: [bundled-https]
+  dvorcam:
+    ports:
+      - '127.0.0.1:9001:9001'
+      - '127.0.0.1:8889:8889'

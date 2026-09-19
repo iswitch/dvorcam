@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ru" data-bs-theme="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Архив камеры</title>
+<link href="/static/style.css" rel="stylesheet">
+<style>
+body{background:#11151c;color:#e6edf5}main{max-width:1100px;margin:auto;padding:24px 16px}.panel{background:#1c2330;border:1px solid #344052;border-radius:16px;padding:18px}.video-stage{position:relative;width:100%;aspect-ratio:16/9;max-height:60vh;background:#000;border-radius:12px;overflow:hidden}.video-stage video,.video-stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}.video-stage canvas{pointer-events:none;background:#000}.video-stage canvas[hidden]{display:none}.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.timeline{position:relative;margin:18px 0 6px}.availability{height:12px;background:#384252;border-radius:6px;position:relative;overflow:hidden}.span{position:absolute;top:0;height:100%;background:#39ba94}input[type=range]{width:100%;accent-color:#62d5b2;min-height:36px;cursor:pointer}.ticks{display:flex;justify-content:space-between;font-size:12px;color:#a9b5c8}.preview{position:relative;width:240px;max-width:100%;height:135px;background:#10141b;border:1px solid #465469;border-radius:8px;overflow:hidden}.preview img{width:100%;height:100%;object-fit:contain}.preview time{position:absolute;bottom:0;left:0;right:0;background:#000b;text-align:center;font-size:13px}.muted{color:#a9b5c8}.details{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-top:18px}button,a,input,select{touch-action:manipulation}#status{min-height:24px}.dot{display:inline-block;width:10px;height:10px;background:#39ba94;border-radius:3px;margin-right:6px}@media(max-width:540px){main{padding:12px}.panel{padding:12px}.preview{width:160px;height:90px}h1{font-size:20px!important}}
+</style>
+</head>
+<body><main>
+<div class="toolbar mb-3"><a href="/admin/" class="btn btn-outline-light">← Камеры</a><h1 class="h4 m-0">Архив камеры</h1></div>
+<p class="muted text-break">{{ camera.id }}</p>
+<div class="panel">
+<div class="video-stage"><video id="player" controls playsinline preload="metadata"></video><canvas id="lastFrame" hidden aria-hidden="true"></canvas></div>
+<div class="toolbar mt-3">
+<button id="back" class="btn btn-outline-light" disabled>−30 сек</button><button id="forward" class="btn btn-outline-light" disabled>+30 сек</button>
+<label for="zoom">Масштаб</label><select id="zoom" class="form-select w-auto"><option value="{{ retention }}">Весь срок хранения</option><option value="86400">24 часа</option><option value="3600">1 час</option><option value="900">15 минут</option></select>
+<a class="btn btn-success ms-auto" href="/{{ camera.id }}/">В эфир ↗</a>
+</div>
+<div class="timeline"><div id="availability" class="availability"></div><input id="seek" aria-label="Время записи" type="range" step="1" disabled><div class="ticks"><span id="left"></span><span id="middle"></span><span id="right"></span></div></div>
+<div class="details"><div><div id="status" role="status" aria-live="polite">Загружаем архив…</div><div class="muted small"><span class="dot"></span>Есть запись · серый — нет записи</div><div class="muted small mt-1" id="zone"></div></div>
+<div class="preview"><img id="thumbnail" alt="Превью выбранного времени" hidden><time id="previewTime"></time></div></div>
+<div class="toolbar mt-3"><label for="moment">Перейти ко времени</label><input id="moment" type="datetime-local" step="1" class="form-control w-auto"><button id="go" class="btn btn-outline-light" disabled>Перейти</button><button id="refresh" class="btn btn-outline-secondary">Обновить</button></div>
+</div>
+<p class="muted small mt-3">Превью обновляются с шагом 15 секунд. Фрагмент появляется после завершения записи и подготовки; обычно до 5 минут плюс время подготовки.</p>
+</main>
+<script>
+const retention = {{ retention|tojson }};
+const apiBase = {{ url_for('archive_metadata', cam_id=camera.id)|tojson }};
+const player=document.querySelector('#player'),seek=document.querySelector('#seek'),status=document.querySelector('#status'),zoom=document.querySelector('#zoom'),thumbnail=document.querySelector('#thumbnail');
+let spans=[],origin=0,clipEnd=0,selected=Date.now()/1000,dragging=false,previewTimer,playing=false,loadGeneration=0,frameCallback=null,loading=false,selectionRequest=null;
+const lastFrame=document.querySelector("#lastFrame");
+const clock=new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+const label=t=>clock.format(new Date(t*1000));
+document.querySelector('#zone').textContent='Время: '+Intl.DateTimeFormat().resolvedOptions().timeZone;
+function paint(){
+ const now=Date.now()/1000,width=Math.min(retention,Number(zoom.value)),end=Math.min(now,Math.max(now-retention+width,selected+width/2)),start=end-width;
+ seek.min=Math.ceil(start);seek.max=Math.floor(end);seek.value=selected;
+ document.querySelector('#left').textContent=label(start);document.querySelector('#middle').textContent=label((start+end)/2);document.querySelector('#right').textContent=label(end);
+ const bar=document.querySelector('#availability');bar.replaceChildren();
+ for(const s of spans){const a=Math.max(start,s.start),b=Math.min(end,s.end);if(b<=a)continue;const el=document.createElement('div');el.className='span';el.style.left=((a-start)/width*100)+'%';el.style.width=((b-a)/width*100)+'%';bar.append(el);}
+}
+function preview(t){
+ document.querySelector('#previewTime').textContent=label(t);clearTimeout(previewTimer);thumbnail.hidden=true;
+ if(!spans.some(s=>t>=s.start&&t<s.end))return;
+ previewTimer=setTimeout(()=>{thumbnail.src=apiBase+'/preview?time='+t;},180);
+}
+thumbnail.onload=()=>thumbnail.hidden=false;thumbnail.onerror=()=>thumbnail.hidden=true;
+async function playAt(t){
+ const generation=++loadGeneration;
+ if(selectionRequest)selectionRequest.abort();selectionRequest=new AbortController();
+ if(frameCallback!==null&&player.cancelVideoFrameCallback){player.cancelVideoFrameCallback(frameCallback);frameCallback=null;}
+ try{
+  const r=await fetch(apiBase+'?'+new URLSearchParams({at:t}),{cache:'no-store',signal:selectionRequest.signal});
+  if(!r.ok)throw Error();const data=await r.json();if(generation!==loadGeneration)return;
+  const file=data.selection;if(!file){status.textContent='В это время готовой записи нет';return;}
+  const source=new URL(file.url,location.origin).href;
+  selected=file.playback_time;origin=file.start;clipEnd=file.end;playing=true;paint();preview(selected);
+  // Keep the previous frame until the new file has sought to the requested offset.
+  if(!loading&&player.readyState>=2&&player.videoWidth){
+   lastFrame.width=player.videoWidth;lastFrame.height=player.videoHeight;
+   lastFrame.getContext('2d').drawImage(player,0,0);lastFrame.hidden=false;
+  }
+  loading=true;player.pause();
+  status.textContent=file.gap_skipped?'Пропуск записи. Переход к '+label(selected):'Загрузка · '+label(selected);
+  const resume=()=>{
+   if(generation!==loadGeneration)return;
+   player.onseeked=null;
+   if(player.requestVideoFrameCallback){frameCallback=player.requestVideoFrameCallback(()=>{
+    if(generation!==loadGeneration)return;
+    loading=false;lastFrame.hidden=true;frameCallback=null;
+   });}
+   player.play().catch(error=>{if(generation===loadGeneration&&error.name!=='AbortError')status.textContent='Нажмите ▶ для воспроизведения';});
+  };
+  // Reuse the loaded file even if playback was paused by the browser's autoplay policy.
+  if(player.src===source&&player.readyState>=1){
+   player.onseeked=resume;
+   if(Math.abs(player.currentTime-file.offset_seconds)>0.001)player.currentTime=file.offset_seconds;else resume();
+   return;
+  }
+  player.onloadedmetadata=()=>{
+   if(generation!==loadGeneration)return;
+   player.onseeked=resume;
+   if(file.offset_seconds>0)player.currentTime=file.offset_seconds;else resume();
+  };
+  player.src=source;player.load();
+ }catch(error){if(generation===loadGeneration&&error.name!=='AbortError')status.textContent='Не удалось открыть архив. Обновите запись.';}
+}
+async function refresh(){
+ const button=document.querySelector('#refresh');button.disabled=true;
+ try{const r=await fetch(apiBase,{cache:'no-store'});if(!r.ok)throw Error();const data=await r.json();spans=data.intervals.filter(s=>s.end>s.start).sort((a,b)=>a.start-b.start);
+ const empty=!spans.length;for(const id of ['seek','go','back','forward'])document.getElementById(id).disabled=empty;
+ if(!playing){if(empty)status.textContent='За выбранный срок записей пока нет';else{selected=Math.max(spans.at(-1).start,spans.at(-1).end-60);playAt(selected);}}
+ paint();
+ }catch{status.textContent='Не удалось загрузить архив. Нажмите «Обновить».';}finally{button.disabled=false;}
+}
+player.addEventListener('playing',()=>{
+ if(player.requestVideoFrameCallback)return;
+ const generation=loadGeneration;
+ requestAnimationFrame(()=>requestAnimationFrame(()=>{
+  if(generation===loadGeneration&&player.readyState>=2){loading=false;lastFrame.hidden=true;}
+ }));
+});
+seek.addEventListener('input',()=>{dragging=true;selected=Number(seek.value);preview(selected);status.textContent=label(selected);});
+seek.addEventListener('change',()=>{dragging=false;playAt(Number(seek.value));});
+player.addEventListener('timeupdate',()=>{if(!dragging&&playing&&!loading){selected=origin+player.currentTime;seek.value=selected;status.textContent='Архив · '+label(selected);}});
+// Move to the next immutable file; the API resolves any recording gap.
+player.addEventListener('ended',()=>{if(spans.some(s=>s.end>clipEnd+0.2))playAt(clipEnd);else{playing=false;status.textContent='Достигнут конец доступной записи';}});
+player.addEventListener('error',()=>{status.textContent='Фрагмент недоступен. Выберите другое время или обновите архив.';});
+zoom.addEventListener('change',paint);document.querySelector('#refresh').onclick=refresh;
+document.querySelector('#back').onclick=()=>playAt(selected-30);document.querySelector('#forward').onclick=()=>playAt(selected+30);
+document.querySelector('#go').onclick=()=>{const t=new Date(document.querySelector('#moment').value).getTime()/1000;if(!Number.isFinite(t)||t<Date.now()/1000-retention||t>Date.now()/1000){status.textContent='Выберите время в пределах срока хранения';return;}playAt(t);};
+refresh();setInterval(()=>{if(!dragging&&!document.hidden)refresh();},30000);
+</script></body></html>

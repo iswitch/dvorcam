@@ -1,0 +1,6 @@
+# Maintainer use only. Customers receive the already built image.
+services:
+  dvorcam:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
