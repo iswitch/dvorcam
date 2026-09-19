@@ -218,3 +218,41 @@ def test_camera_probe_is_required_new_camera_starts_empty_and_secret_not_rendere
     assert core.state()['cameras'][0]['record'] is False
     assert calls == []
     assert core.state()['cameras'][0]['fallback_file'] == camera['fallback_file']
+
+
+@pytest.mark.parametrize('cid', ['cam_1', 'admin-front', 'api-front'])
+def test_snapshot_aliases_share_public_access_and_freshness(installation, cid):
+    core, web, worker = installation
+    client = web.app.test_client()
+    value = core.state()
+    value['cameras'] = [{'id': cid, 'record': False}]
+    core.atomic_json(core.DATA / 'state.json', value)
+    urls = [f'/{cid}.jpg', f'/snapshots/{cid}.jpg']
+    for url in urls:
+        assert client.get(url).status_code == 404
+
+    image = core.ARCHIVE / '.snapshots' / (cid + '.jpg')
+    image.write_bytes(b'\xff\xd8snapshot\xff\xd9')
+    for url in urls:
+        response = client.get(url)
+        assert response.status_code == 200
+        assert response.data == image.read_bytes()
+        assert response.mimetype == 'image/jpeg'
+        assert response.headers.get('Location') is None
+        assert response.headers['Cache-Control'] == 'public, max-age=1'
+        head = client.head(url)
+        assert head.status_code == 200 and head.data == b''
+        assert head.content_length == image.stat().st_size
+
+    stale = time.time() - 10
+    os.utime(image, (stale, stale))
+    for url in urls:
+        assert client.get(url).status_code == 404
+    os.utime(image, None)
+    (core.ARCHIVE / '.dvorcam-storage').unlink()
+    for url in urls:
+        assert client.get(url).status_code == 503
+    for url in ('/unknown.jpg', '/snapshots/unknown.jpg', '/bad.id.jpg'):
+        assert client.get(url).status_code == 404
+    for url in ('/', '/admin', '/admin/', '/admin/archive/' + cid + '/'):
+        assert client.get(url).status_code == 401

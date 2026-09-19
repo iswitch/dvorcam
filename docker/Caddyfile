@@ -6,7 +6,7 @@
 }
 {$PUBLIC_URL} {
     header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet"
-    @application path / /admin /admin/* /api/* /static/* /snapshots/* /healthz
+    @application path / /admin /admin/* /api/* /static/* /snapshots/* /*.jpg /healthz
     handle @application {
         reverse_proxy dvorcam:9001
     }

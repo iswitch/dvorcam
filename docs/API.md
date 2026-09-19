@@ -8,7 +8,7 @@
 | --- | --- |
 | `/<id>/whep` | WebRTC через WHEP, без перекодирования |
 | `/<id>/` | Встроенный WebRTC-плеер MediaMTX |
-| `/snapshots/<id>.jpg` | Свежий снимок камеры; 404, если его нет |
+| `/<id>.jpg` или `/snapshots/<id>.jpg` | Один и тот же свежий снимок камеры; 404, если его нет |
 | `/api/v1/cameras/<id>/archive` | Список записей и данные для таймлайна |
 | `/api/v1/cameras/<id>/archive/video?segment=<segment_id>` | Готовый MP4 с поддержкой GET, HEAD и Range |
 | `/api/v1/cameras/<id>/archive/preview?time=<unix_seconds>` | Готовое превью 240×135; шаг 15 секунд |

@@ -28,7 +28,8 @@ app.config.update(SECRET_KEY=hashlib.sha256(os.environ.get('ADMIN_PASSWORD', '')
 
 @app.before_request
 def authentication():
-    if not (request.path.startswith('/admin') or request.path == '/'):
+    # Camera IDs may start with admin; only the admin URL namespace requires login.
+    if request.path not in ('/', '/admin') and not request.path.startswith('/admin/'):
         return
     auth = request.authorization
     user, password = os.environ.get('ADMIN_USERNAME', ''), os.environ.get('ADMIN_PASSWORD', '')
@@ -45,7 +46,7 @@ def headers(response):
     response.headers['X-Robots-Tag'] = 'noindex, nofollow, noarchive, nosnippet'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'same-origin'
-    if request.path.startswith(('/admin', '/api')):
+    if request.path in ('/admin', '/api') or request.path.startswith(('/admin/', '/api/')):
         response.headers['Cache-Control'] = 'private, no-store'
     return response
 
@@ -177,6 +178,8 @@ def camera_delete(cid):
     return redirect(url_for('index', message='Камера удалена. Её записи будут очищены по сроку и лимиту хранения'))
 
 
+# Both public URLs serve the same frame with the same freshness and storage checks.
+@app.route('/<cid>.jpg')
 @app.route('/snapshots/<cid>.jpg')
 def snapshot(cid):
     if not CAMERA_ID.fullmatch(cid) or not any(c['id'] == cid for c in state()['cameras']):
