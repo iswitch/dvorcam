@@ -1,4 +1,5 @@
 # Versions from the tested runtime; update together with the release.
+av==17.1.0
 blinker==1.9.0
 click==8.5.0
 Flask==3.1.2
