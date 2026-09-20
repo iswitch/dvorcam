@@ -1,31 +1,24 @@
-<!doctype html>
-<html lang="ru" data-bs-theme="dark">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Архив камеры</title>
-<link href="/static/style.css" rel="stylesheet">
-<style>
-body{background:#11151c;color:#e6edf5}main{max-width:1100px;margin:auto;padding:24px 16px}.panel{background:#1c2330;border:1px solid #344052;border-radius:16px;padding:18px}.video-stage{position:relative;width:100%;aspect-ratio:16/9;max-height:60vh;background:#000;border-radius:12px;overflow:hidden}.video-stage video,.video-stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}.video-stage canvas{pointer-events:none;background:#000}.video-stage canvas[hidden]{display:none}.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.timeline{position:relative;margin:18px 0 6px}.availability{height:12px;background:#384252;border-radius:6px;position:relative;overflow:hidden}.span{position:absolute;top:0;height:100%;background:#39ba94}input[type=range]{width:100%;accent-color:#62d5b2;min-height:36px;cursor:pointer}.ticks{display:flex;justify-content:space-between;font-size:12px;color:#a9b5c8}.preview{position:relative;width:240px;max-width:100%;aspect-ratio:16/9;background:#10141b;border:1px solid #465469;border-radius:8px;overflow:hidden}.preview img{width:100%;height:auto}.preview img[hidden]{display:none}.preview time{position:absolute;bottom:0;left:0;right:0;background:#000b;text-align:center;font-size:13px}.muted{color:#a9b5c8}.details{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-top:18px}button,a,input,select{touch-action:manipulation}#status{min-height:24px}.dot{display:inline-block;width:10px;height:10px;background:#39ba94;border-radius:3px;margin-right:6px}@media(max-width:540px){main{padding:12px}.panel{padding:12px}.preview{width:160px}h1{font-size:20px!important}}
-</style>
-</head>
-<body><main>
-<div class="toolbar mb-3"><a href="/admin/" class="btn btn-outline-light">← Камеры</a><h1 class="h4 m-0">Архив камеры</h1></div>
-<p class="muted text-break">{{ camera.id }}</p>
-<div class="panel">
+{% extends 'base.html' %}
+{% block title %}Архив · {{ camera.name }} · DvorCam{% endblock %}
+{% block head %}<style>
+.archive-main .panel{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:18px}.video-stage{position:relative;width:100%;aspect-ratio:16/9;max-height:60vh;background:#000;border-radius:12px;overflow:hidden}.video-stage video,.video-stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}.video-stage canvas{pointer-events:none;background:#000}.video-stage canvas[hidden]{display:none}.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.timeline{position:relative;margin:18px 0 6px}.availability{height:12px;background:var(--line);border-radius:6px;position:relative;overflow:hidden}.span{position:absolute;top:0;height:100%;background:var(--accent)}input[type=range]{width:100%;accent-color:var(--accent);min-height:36px;cursor:pointer}.ticks{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}.preview{position:relative;width:240px;max-width:100%;aspect-ratio:16/9;background:var(--soft);border:1px solid var(--line);border-radius:8px;overflow:hidden}.preview img{width:100%;height:auto}.preview img[hidden]{display:none}.preview time{position:absolute;bottom:0;left:0;right:0;background:#000b;color:#fff;text-align:center;font-size:13px}.muted{color:var(--muted)}.details{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-top:18px}button,a,input,select{touch-action:manipulation}#status{min-height:24px}.dot{display:inline-block;width:10px;height:10px;background:var(--accent);border-radius:3px;margin-right:6px}@media(max-width:540px){main{padding:12px}.archive-main .panel{padding:12px}.preview{width:160px}h1{font-size:20px!important}}
+</style>{% endblock %}
+{% block content %}<div class="archive-main">
+<a href="/admin/" class="back-link">← Все камеры</a><div class="page-heading"><div><h1>{{ camera.name }}</h1><p class="text-body-secondary mb-0">Архив камеры</p></div><a class="btn btn-outline-secondary" href="/{{ camera.id }}-{{ 'hd' if 'hd' in camera.streams else 'sd' }}/">Открыть эфир</a></div><div class="panel">
 <div class="video-stage"><video id="player" controls playsinline preload="metadata"></video><canvas id="lastFrame" hidden aria-hidden="true"></canvas></div>
 <div class="toolbar mt-3">
-<button id="back" class="btn btn-outline-light" disabled>−30 сек</button><button id="forward" class="btn btn-outline-light" disabled>+30 сек</button>
+<button id="back" class="btn btn-outline-secondary" disabled>−30 сек</button><button id="forward" class="btn btn-outline-secondary" disabled>+30 сек</button>
 <label for="zoom">Масштаб</label><select id="zoom" class="form-select w-auto"><option value="{{ retention }}">Весь срок хранения</option><option value="86400">24 часа</option><option value="3600">1 час</option><option value="900">15 минут</option></select>
-<a class="btn btn-success ms-auto" href="/{{ camera.id }}/">В эфир ↗</a>
+
 </div>
 <div class="timeline"><div id="availability" class="availability"></div><input id="seek" aria-label="Время записи" type="range" step="1" disabled><div class="ticks"><span id="left"></span><span id="middle"></span><span id="right"></span></div></div>
 <div class="details"><div><div id="status" role="status" aria-live="polite">Загружаем архив…</div><div class="muted small"><span class="dot"></span>Есть запись · серый — нет записи</div><div class="muted small mt-1" id="zone"></div></div>
 <div class="preview"><img id="thumbnail" alt="Превью выбранного времени" hidden><time id="previewTime"></time></div></div>
-<div class="toolbar mt-3"><label for="moment">Перейти ко времени</label><input id="moment" type="datetime-local" step="1" class="form-control w-auto"><button id="go" class="btn btn-outline-light" disabled>Перейти</button><button id="refresh" class="btn btn-outline-secondary">Обновить</button></div>
+<div class="toolbar mt-3"><label for="moment">Перейти ко времени</label><input id="moment" type="datetime-local" step="1" class="form-control w-auto"><button id="go" class="btn btn-outline-secondary" disabled>Перейти</button><button id="refresh" class="btn btn-outline-secondary">Обновить</button></div>
 </div>
 <p class="muted small mt-3">Превью обновляются с шагом 15 секунд. Фрагмент появляется после завершения записи и подготовки; обычно до 5 минут плюс время подготовки.</p>
-</main>
-<script>
+</div>{% endblock %}
+{% block scripts %}<script>
 const retention = {{ retention|tojson }};
 const apiBase = {{ url_for('archive_metadata', cam_id=camera.id)|tojson }};
 const player=document.querySelector('#player'),seek=document.querySelector('#seek'),status=document.querySelector('#status'),zoom=document.querySelector('#zoom'),thumbnail=document.querySelector('#thumbnail');
@@ -44,7 +37,7 @@ function paint(){
 function preview(t){
  document.querySelector('#previewTime').textContent=label(t);clearTimeout(previewTimer);thumbnail.hidden=true;
  if(!spans.some(s=>t>=s.start&&t<s.end))return;
- previewTimer=setTimeout(()=>{thumbnail.src=apiBase+'/preview?time='+t;},180);
+ previewTimer=setTimeout(()=>{thumbnail.src=apiBase+'preview/?time='+t;},180);
 }
 thumbnail.onload=()=>{thumbnail.parentElement.style.aspectRatio=thumbnail.naturalWidth+'/'+thumbnail.naturalHeight;thumbnail.hidden=false;};thumbnail.onerror=()=>thumbnail.hidden=true;
 async function playAt(t){
@@ -112,4 +105,4 @@ zoom.addEventListener('change',paint);document.querySelector('#refresh').onclick
 document.querySelector('#back').onclick=()=>playAt(selected-30);document.querySelector('#forward').onclick=()=>playAt(selected+30);
 document.querySelector('#go').onclick=()=>{const t=new Date(document.querySelector('#moment').value).getTime()/1000;if(!Number.isFinite(t)||t<Date.now()/1000-retention||t>Date.now()/1000){status.textContent='Выберите время в пределах срока хранения';return;}playAt(t);};
 refresh();setInterval(()=>{if(!dragging&&!document.hidden)refresh();},30000);
-</script></body></html>
+</script>{% endblock %}

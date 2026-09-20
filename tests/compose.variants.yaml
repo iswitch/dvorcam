@@ -1,0 +1,10 @@
+services:
+  feed:
+    command: ['-nostdin', '-v', 'error', '-re', '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=25', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-c:v', 'libx264', '-preset', 'ultrafast', '-bf', '0', '-g', '50', '-threads', '1', '-c:a', 'aac', '-f', 'rtsp', '-rtsp_transport', 'tcp', 'rtsp://camera:8554/test']
+  feed-sd:
+    image: dvorcam:0.3.0
+    entrypoint: ffmpeg
+    command: ['-nostdin', '-v', 'error', '-re', '-f', 'lavfi', '-i', 'testsrc2=size=640x480:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=8000', '-c:v', 'libx264', '-preset', 'ultrafast', '-bf', '0', '-g', '100', '-threads', '1', '-c:a', 'pcm_alaw', '-f', 'rtsp', '-rtsp_transport', 'tcp', 'rtsp://camera:8554/sd']
+    depends_on:
+      - camera
+    restart: on-failure

@@ -32,24 +32,25 @@ def changing_stream(tmp_path):
 def test_snapshots_follow_current_frame_dimensions(installation, changing_stream, monkeypatch, lose_storage):
     core, web, worker = installation
     stream, stages = changing_stream
-    target = core.ARCHIVE / '.snapshots/cam.jpg'
+    target = core.ARCHIVE / '.snapshots/cam-sd.jpg'
     sizes = []
     replace = os.replace
     source = av.open(str(stream))
     clock = [0]
 
-    def frames_with_clock(*args):
-        for index, frame in enumerate(source.decode(video=0)):
+    def packets_with_clock(*args):
+        for index, frame in enumerate(source.demux(video=0)):
             clock[0] = index / 4
             yield frame
 
     @contextmanager
     def open_stream(*args, **kwargs):
         with source:
-            yield SimpleNamespace(streams=source.streams, decode=frames_with_clock)
+            yield SimpleNamespace(streams=source.streams, demux=packets_with_clock)
 
     def publish(temporary, destination):
-        assert destination == target
+        if destination != target:
+            return replace(temporary, destination)
         # The old JPEG remains complete until an equally complete replacement is published.
         if target.exists():
             with Image.open(target) as previous:
@@ -64,7 +65,7 @@ def test_snapshots_follow_current_frame_dimensions(installation, changing_stream
     with monkeypatch.context() as patch:
         patch.setattr(av, 'open', open_stream)
         patch.setattr(os, 'replace', publish)
-        patch.setattr(sys, 'argv', ['snapshot.py', 'cam'])
+        patch.setattr(sys, 'argv', ['snapshot.py', 'cam-sd'])
         patch.setattr(time, 'monotonic', lambda: clock[0])
         if lose_storage:
             with pytest.raises(SystemExit) as stopped:
@@ -77,9 +78,9 @@ def test_snapshots_follow_current_frame_dimensions(installation, changing_stream
     assert not list(target.parent.glob('*.tmp'))
     if not lose_storage:
         value = core.state()
-        value['cameras'] = [{'id': 'cam'}]
+        value['cameras'] = [{'id': 'cam', 'streams': {'sd': {}}}]
         core.atomic_json(core.DATA / 'state.json', value)
         client = web.app.test_client()
-        for url in ('/cam.jpg', '/snapshots/cam.jpg'):
+        for url in ('/cam-sd.jpg/',):
             assert client.get(url).data == target.read_bytes()
             assert client.head(url).status_code == 200

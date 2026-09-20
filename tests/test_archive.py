@@ -29,7 +29,7 @@ def test_empty_install_auth_and_csrf(installation):
     assert client.get('/admin/').status_code == 401
     assert client.get('/admin/', headers=AUTH).status_code == 200
     assert client.post('/admin/settings', headers=AUTH, data={}).status_code == 403
-    assert client.get('/api/v1/cameras/no-camera/archive').status_code == 404
+    assert client.get('/archive/no-camera/').status_code == 404
 
 
 def test_settings_persist_and_require_deletion_confirmation(installation):
@@ -61,14 +61,14 @@ def test_api_contract_retention_gaps_range_head(installation):
     old = clip(core, 'cam_1', time.time() - 2 * 86400)
     newer = clip(core, 'cam_1', time.time() - 3600)
     client = web.app.test_client()
-    response = client.get('/api/v1/cameras/cam_1/archive', query_string={'at': old['start'] + 5})
+    response = client.get('/archive/cam_1/', query_string={'at': old['start'] + 5})
     data = response.get_json()
     assert response.status_code == 200
     assert data['retention_seconds'] == 7 * 86400
     assert data['playback_mode'] == 'static_segments'
     assert data['selection']['offset_seconds'] == 5
     assert len(data['intervals']) == 2
-    gap = client.get('/api/v1/cameras/cam_1/archive', query_string={'at': old['end'] + 1}).json
+    gap = client.get('/archive/cam_1/', query_string={'at': old['end'] + 1}).json
     assert gap['selection']['gap_skipped'] is True
     assert gap['selection']['segment_id'] == newer['segment_id']
     url = data['selection']['url']
@@ -76,10 +76,10 @@ def test_api_contract_retention_gaps_range_head(installation):
     assert head.status_code == 200 and head.data == b'' and head.content_length == 10
     ranged = client.get(url, headers={'Range': 'bytes=2-5'})
     assert ranged.status_code == 206 and ranged.data == b'2345'
-    assert client.get('/api/v1/cameras/cam_1/archive?at=nan').status_code == 400
-    assert client.get('/api/v1/cameras/cam_1/archive/video?time=1').status_code == 400
+    assert client.get('/archive/cam_1/?at=nan').status_code == 400
+    assert client.get('/archive/cam_1/video/?time=1').status_code == 400
     (core.ARCHIVE / '.dvorcam-storage').unlink()
-    assert client.get('/api/v1/cameras/cam_1/archive').status_code == 503
+    assert client.get('/archive/cam_1/').status_code == 503
 
 
 def test_retention_keeps_active_and_cleans_deleted_camera(installation, monkeypatch):
@@ -173,9 +173,9 @@ def test_mediamtx_config_web_rtc_only(installation):
     assert config['webrtcAdditionalHosts'] == ['localhost']
     assert not any(config[k] for k in ('hls', 'rtmp', 'srt', 'moq', 'metrics'))
     assert config['pathDefaults']['recordDeleteAfter'] == '0s'
-    value['cameras'] = [{'id': 'cam', 'rtsp': 'rtsp://127.0.0.1/test', 'record': True}]
-    assert core.media_config(value, paused=True)['paths']['cam']['record'] is False
-    assert core.media_config(value)['paths']['cam']['record'] is True
+    value['cameras'] = [{'id': 'cam', 'streams': {'sd': {'rtsp': 'rtsp://127.0.0.1/test', 'fallback_file': 'cam-sd.mp4'}}, 'record': True}]
+    assert core.media_config(value, paused=True)['paths']['cam-sd']['record'] is False
+    assert core.media_config(value)['paths']['cam-sd']['record'] is True
 
 
 def test_auth_rejects_bearer_and_unicode_csrf(installation):
@@ -186,7 +186,7 @@ def test_auth_rejects_bearer_and_unicode_csrf(installation):
     assert client.post('/admin/settings', headers=AUTH, data={'csrf': 'не токен'}).status_code == 403
 
 
-def test_camera_probe_is_required_new_camera_starts_empty_and_secret_not_rendered(installation, monkeypatch):
+def test_camera_probe_is_required_and_credentials_only_rendered_in_edit_form(installation, monkeypatch):
     core, web, worker = installation
     calls = []
     def run(command, **kwargs):
@@ -202,22 +202,24 @@ def test_camera_probe_is_required_new_camera_starts_empty_and_secret_not_rendere
     with client.session_transaction() as session:
         csrf = session['csrf']
     result = client.post('/admin/camera', headers=AUTH, data={'csrf': csrf, 'id': 'entry',
-        'rtsp': 'rtsp://192.0.2.1:554/video', 'camera_user': 'user', 'camera_password': 'p@ss:$#',
+        'rtsp_sd': 'rtsp://192.0.2.1:554/video', 'camera_user_sd': 'user', 'camera_password_sd': 'p@ss:$#',
         'name': 'Entrance', 'record': 'on'})
     assert result.status_code == 302
     camera = core.state()['cameras'][0]
-    assert camera['rtsp'] == 'rtsp://user:p%40ss%3A%24%23@192.0.2.1:554/video'
+    assert camera['streams']['sd']['rtsp'] == 'rtsp://user:p%40ss%3A%24%23@192.0.2.1:554/video'
     assert camera['record'] is True
-    assert (core.DATA / 'fallback' / camera['fallback_file']).is_file()
+    assert (core.DATA / 'fallback' / camera['streams']['sd']['fallback_file']).is_file()
     assert calls[1][calls[1].index('-i') + 1].startswith('color=')
     html = client.get('/admin/?edit=entry', headers=AUTH).text
-    assert 'p%40ss' not in html and 'p@ss' not in html
+    assert 'value="p@ss:$#"' in html and 'type="password"' in html
+    listing = client.get('/admin/', headers=AUTH).text
+    assert 'p%40ss' not in listing and 'p@ss' not in listing
     # An offline camera can be disabled without re-probing the saved source.
     calls.clear()
     client.post('/admin/camera', headers=AUTH, data={'csrf': csrf, 'id': 'entry', 'editing': 'entry', 'name': 'New name'})
     assert core.state()['cameras'][0]['record'] is False
     assert calls == []
-    assert core.state()['cameras'][0]['fallback_file'] == camera['fallback_file']
+    assert core.state()['cameras'][0]['streams']['sd']['fallback_file'] == camera['streams']['sd']['fallback_file']
 
 
 @pytest.mark.parametrize('cid', ['cam_1', 'admin-front', 'api-front'])
@@ -225,13 +227,18 @@ def test_snapshot_aliases_share_public_access_and_freshness(installation, cid):
     core, web, worker = installation
     client = web.app.test_client()
     value = core.state()
-    value['cameras'] = [{'id': cid, 'record': False}]
+    value['cameras'] = [{'id': cid, 'record': False, 'streams': {'sd': {}}}]
     core.atomic_json(core.DATA / 'state.json', value)
-    urls = [f'/{cid}.jpg', f'/snapshots/{cid}.jpg']
+    urls = [f'/{cid}-sd.jpg/']
+    assert client.get(f'/snapshots/{cid}.jpg').status_code == 404
+    assert client.get(f'/{cid}.jpg').status_code == 404
+    assert client.get(f'/{cid}-hd.jpg/').status_code == 404
+    assert client.get(f'/{cid}-hd/').status_code == 404
     for url in urls:
         assert client.get(url).status_code == 404
 
-    image = core.ARCHIVE / '.snapshots' / (cid + '.jpg')
+    image = core.ARCHIVE / '.snapshots' / (cid + '-sd.jpg')
+    core.atomic_json(image.with_suffix('.json'), {'checked_at': time.time()})
     image.write_bytes(b'\xff\xd8snapshot\xff\xd9')
     for url in urls:
         response = client.get(url)
@@ -244,7 +251,7 @@ def test_snapshot_aliases_share_public_access_and_freshness(installation, cid):
         assert head.status_code == 200 and head.data == b''
         assert head.content_length == image.stat().st_size
 
-    stale = time.time() - 10
+    stale = time.time() - 31
     os.utime(image, (stale, stale))
     for url in urls:
         assert client.get(url).status_code == 404
@@ -277,20 +284,20 @@ def test_camera_audio_detection_and_offline_edit(installation, monkeypatch, audi
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(web.subprocess, 'run', probe_and_placeholder)
-    form = {'csrf': csrf, 'id': 'camera', 'name': 'Camera', 'rtsp': 'rtsp://camera/live', 'record': 'on'}
+    form = {'csrf': csrf, 'id': 'camera', 'name': 'Camera', 'rtsp_sd': 'rtsp://camera/live', 'record': 'on'}
     client.post('/admin/camera', data=form, headers=AUTH)
     camera = core.state()['cameras'][0]
-    assert camera['has_audio'] is bool(audio_codec)
+    assert camera['streams']['sd']['has_audio'] is bool(audio_codec)
     config = core.media_config(core.state())
-    path = config['paths']['camera']
+    path = config['paths']['camera-sd']
     assert path['alwaysAvailable'] and not path['alwaysAvailableRecorded']
     if audio_codec:
         assert path['source'] == 'publisher' and path['runOnInitRestart']
         assert config['authInternalUsers'][1]['ips'] == ['127.0.0.1', '::1']
-        assert {'action': 'publish', 'path': 'camera'} in config['authInternalUsers'][1]['permissions']
+        assert {'action': 'publish', 'path': 'camera-sd'} in config['authInternalUsers'][1]['permissions']
         assert all(p['action'] == 'read' for p in config['authInternalUsers'][0]['permissions'])
     else:
-        assert path['source'] == form['rtsp'] and 'runOnInit' not in path
+        assert path['source'] == form['rtsp_sd'] and 'runOnInit' not in path
 
     def offline(*args, **kwargs):
         raise AssertionError('Unchanged offline source must not be probed')
@@ -298,8 +305,8 @@ def test_camera_audio_detection_and_offline_edit(installation, monkeypatch, audi
     monkeypatch.setattr(web.subprocess, 'run', offline)
     client.post('/admin/camera', data={'csrf': csrf, 'id': 'camera', 'editing': 'camera', 'name': 'Renamed'}, headers=AUTH)
     updated = core.state()['cameras'][0]
-    assert updated['has_audio'] == camera['has_audio']
-    assert updated['fallback_file'] == camera['fallback_file']
+    assert updated['streams']['sd']['has_audio'] == camera['streams']['sd']['has_audio']
+    assert updated['streams']['sd']['fallback_file'] == camera['streams']['sd']['fallback_file']
     assert updated['name'] == 'Renamed' and not updated['record']
     client.post('/admin/delete/camera', data={'csrf': csrf}, headers=AUTH)
     assert core.media_config(core.state())['paths'] == {}
@@ -312,23 +319,23 @@ def test_audio_relay_source_revision_and_streamcopy(installation, monkeypatch):
     import sys
     core, web, worker = installation
     value = core.state()
-    camera = {'id': 'cam', 'rtsp': 'rtsp://camera/live?channel=1&audio=on', 'record': True, 'has_audio': True}
+    camera = {'id': 'cam', 'record': True, 'streams': {'sd': {'rtsp': 'rtsp://camera/live?channel=1&audio=on', 'has_audio': True, 'fallback_file': 'cam.mp4'}}}
     value['cameras'] = [camera]
-    original = core.media_config(value)['paths']['cam']['runOnInit']
-    camera['rtsp'] = 'rtsp://camera/other'
-    assert core.media_config(value)['paths']['cam']['runOnInit'] != original
+    original = core.media_config(value)['paths']['cam-sd']['runOnInit']
+    camera['streams']['sd']['rtsp'] = 'rtsp://camera/other'
+    assert core.media_config(value)['paths']['cam-sd']['runOnInit'] != original
     core.atomic_json(core.DATA / 'state.json', value)
-    revision = hashlib.sha256(camera['rtsp'].encode()).hexdigest()[:16]
-    monkeypatch.setattr(sys, 'argv', ['relay.py', 'cam', revision])
+    revision = hashlib.sha256(camera['streams']['sd']['rtsp'].encode()).hexdigest()[:16]
+    monkeypatch.setattr(sys, 'argv', ['relay.py', 'cam-sd', revision])
     executed = []
     monkeypatch.setattr(os, 'execvp', lambda executable, args: executed.append(args))
     runpy.run_path(str(Path(core.__file__).with_name('relay.py')), run_name='__main__')
     args = executed[0]
-    assert args[args.index('-i') + 1] == camera['rtsp']
+    assert args[args.index('-i') + 1] == camera['streams']['sd']['rtsp']
     assert args[args.index('-c:v') + 1] == 'copy'
     assert args[args.index('-map') + 1] == '0:v:0' and '-an' in args
-    assert args[-1] == 'rtsp://127.0.0.1:8554/cam'
-    monkeypatch.setattr(sys, 'argv', ['relay.py', 'cam', 'outdated'])
+    assert args[-1] == 'rtsp://127.0.0.1:8554/cam-sd'
+    monkeypatch.setattr(sys, 'argv', ['relay.py', 'cam-sd', 'outdated'])
     with pytest.raises(SystemExit, match='configuration changed'):
         runpy.run_path(str(Path(core.__file__).with_name('relay.py')), run_name='__main__')
     assert len(executed) == 1

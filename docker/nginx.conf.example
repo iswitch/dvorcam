@@ -1,0 +1,31 @@
+server {
+    listen 80;
+    server_name video.example.ru;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name video.example.ru;
+    ssl_certificate /etc/letsencrypt/live/video.example.ru/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/video.example.ru/privkey.pem;
+
+    add_header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet" always;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_read_timeout 120s;
+
+    # Only WHEP and the player script go directly to MediaMTX; WHIP is not exposed.
+    location ~ ^/[A-Za-z0-9_-]+-(hd|sd)/(reader\.js|whep(/.*)?)$ {
+        proxy_pass http://127.0.0.1:8889;
+        proxy_read_timeout 3600s;
+    }
+    # DvorCam validates the camera/quality and protects administrative pages.
+    location / {
+        proxy_pass http://127.0.0.1:9001;
+    }
+}

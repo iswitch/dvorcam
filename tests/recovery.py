@@ -25,30 +25,30 @@ if __name__ == '__main__':
     try:
         time.sleep(8)
         paths = json.loads(inside("import json; from urllib.request import urlopen; print(urlopen('http://127.0.0.1:9997/v3/paths/list').read().decode())"))
-        camera = next(p for p in paths['items'] if p['name'] == 'synthetic')
+        camera = next(p for p in paths['items'] if p['name'] == 'synthetic-hd')
         assert camera['available'] is True and camera['online'] is False, camera
         subprocess.run(['docker', 'exec', '-e', 'PYTHONPATH=/tmp/webrtc-test', container, 'python', '/tmp/webrtc.py'], check=True)
-        count = len(json.loads(fetch('/api/v1/cameras/synthetic/archive'))['clips'])
+        count = len(json.loads(fetch('/archive/synthetic/'))['clips'])
         time.sleep(8)
-        assert len(json.loads(fetch('/api/v1/cameras/synthetic/archive'))['clips']) == count
+        assert len(json.loads(fetch('/archive/synthetic/'))['clips']) == count
         print('PASS: NO SIGNAL remains playable via WebRTC and is not recorded', flush=True)
     finally:
         subprocess.run(compose + ['start', 'feed'], check=True, stdout=subprocess.DEVNULL)
     inside("from pathlib import Path; Path('/archive/.dvorcam-storage').rename('/archive/.storage-offline')")
     try:
         time.sleep(6)
-        configuration = json.loads(inside("from urllib.request import urlopen; print(urlopen('http://127.0.0.1:9997/v3/config/paths/get/synthetic').read().decode())"))
+        configuration = json.loads(inside("from urllib.request import urlopen; print(urlopen('http://127.0.0.1:9997/v3/config/paths/get/synthetic-hd').read().decode())"))
         assert configuration['record'] is False
         print('PASS: missing storage marker stops recording', flush=True)
     finally:
         inside("from pathlib import Path; Path('/archive/.storage-offline').rename('/archive/.dvorcam-storage')")
     time.sleep(6)
-    configuration = json.loads(inside("from urllib.request import urlopen; print(urlopen('http://127.0.0.1:9997/v3/config/paths/get/synthetic').read().decode())"))
+    configuration = json.loads(inside("from urllib.request import urlopen; print(urlopen('http://127.0.0.1:9997/v3/config/paths/get/synthetic-hd').read().decode())"))
     assert configuration['record'] is True
     subprocess.run(['docker', 'restart', container], check=True, stdout=subprocess.DEVNULL)
     for _ in range(30):
         try:
-            data = json.loads(fetch('/api/v1/cameras/synthetic/archive'))
+            data = json.loads(fetch('/archive/synthetic/'))
             if data['recording_enabled'] and data['clips']:
                 break
         except Exception:

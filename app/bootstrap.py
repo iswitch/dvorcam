@@ -29,7 +29,7 @@ if os.geteuid() == 0:
     os.setgid(gid)
     os.setuid(uid)
 if not (DATA / 'state.json').exists():
-    atomic_json(DATA / 'state.json', {'version': 1, 'cameras': [], 'settings': DEFAULT_SETTINGS})
+    atomic_json(DATA / 'state.json', {'version': 2, 'cameras': [], 'settings': DEFAULT_SETTINGS})
 if not (DATA / 'storage-id').exists():
     if (ARCHIVE / '.dvorcam-storage').exists():
         raise SystemExit('Existing archive: restore its matching data volume before starting')

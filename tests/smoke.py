@@ -31,19 +31,21 @@ if __name__ == '__main__':
     else:
         raise SystemExit('Gateway did not become ready')
     assert 'Камер пока нет' in page, 'Run on fresh smoke volumes only'
-    token = re.search(r'name="csrf" value="([^"]+)"', page)[1]
+    # The camera form is a separate page; the empty list intentionally has no writable form.
+    form_page = fetch('/admin/?new=1').decode()
+    token = re.search(r'name="csrf" value="([^"]+)"', form_page)[1]
     page = fetch('/admin/camera', {'csrf': token, 'id': 'synthetic', 'name': 'Synthetic test camera',
-                                 'rtsp': 'rtsp://camera:8554/test', 'record': 'on'}).decode()
+                                 'rtsp_hd': 'rtsp://camera:8554/test', 'record': 'on'}).decode()
     if 'Synthetic test camera' not in page:
         raise SystemExit('Camera was not added: ' + re.sub('<[^>]*>', '', page)[:800])
     print('PASS: empty installation, admin authentication, camera probe and save', flush=True)
     time.sleep(18)
-    jpeg = fetch('/snapshots/synthetic.jpg')
+    jpeg = fetch('/synthetic-hd.jpg/')
     assert jpeg[:2] == b'\xff\xd8'
     print('PASS: live JPEG from the synthetic RTSP camera', flush=True)
     fetch('/admin/camera', {'csrf': token, 'id': 'synthetic', 'editing': 'synthetic', 'name': 'Synthetic test camera'})
     for _ in range(30):
-        data = json.loads(fetch('/api/v1/cameras/synthetic/archive'))
+        data = json.loads(fetch('/archive/synthetic/'))
         if data['clips']:
             break
         time.sleep(2)
@@ -56,7 +58,7 @@ if __name__ == '__main__':
         assert response.status == 200 and int(response.headers['Content-Length']) == clip['size_bytes']
     with opener.open(Request(base + video, headers={'Range': 'bytes=0-99'})) as response:
         assert response.status == 206 and len(response.read()) == 100
-    assert json.loads(fetch('/api/v1/cameras/synthetic/archive?' + urlencode({'at': clip['start'] + 1})))['selection']['offset_seconds'] == 1
+    assert json.loads(fetch('/archive/synthetic/?' + urlencode({'at': clip['start'] + 1})))['selection']['offset_seconds'] == 1
     print('PASS: recording -> close -> verified MP4, metadata, seek offset, HEAD and HTTP Range through Caddy', flush=True)
 
     for _ in range(30):

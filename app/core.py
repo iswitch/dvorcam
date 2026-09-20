@@ -17,6 +17,7 @@ ARCHIVE = Path(os.environ.get('DVORCAM_ARCHIVE', '/archive'))
 MEDIAMTX = os.environ.get('MEDIAMTX_BIN', '/usr/local/bin/mediamtx')
 PUBLIC_URL = os.environ.get('PUBLIC_URL', '').rstrip('/')
 CAMERA_ID = re.compile(r'[A-Za-z0-9_-]{1,80}')
+STREAM_ID = re.compile(r'([A-Za-z0-9_-]{1,80})-(hd|sd)')
 SEGMENT_ID = re.compile(r'\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-\d{6}')
 DEFAULT_SETTINGS = {'retention_days': 1, 'max_gb': 100, 'reserve_gb': 10}
 
@@ -55,7 +56,7 @@ def locked():
 
 def state():
     value = json.loads((DATA / 'state.json').read_text())
-    if value.get('version') != 1:
+    if value.get('version') != 2:
         raise ValueError('Unsupported data version; restore the matching release and backup')
     return value
 
@@ -73,28 +74,31 @@ def media_config(value, paused=False):
     local_permissions = [{'action': 'api'}]
     for cam in value['cameras']:
         cid = cam['id']
-        fallback_name = cam.get('fallback_file', cid + '.mp4')
-        if Path(fallback_name).name != fallback_name:
-            raise ValueError('Invalid placeholder filename')
-        fallback = DATA / 'fallback' / fallback_name
-        paths[cid] = {
-            'source': cam['rtsp'], 'rtspTransport': 'tcp',
-            'record': cam['record'] and not paused,
-            'alwaysAvailable': fallback.is_file(),
-            'alwaysAvailableRecorded': False,
-            # Only JPEG extraction decodes frames; live video and archive never use an encoder.
-            'runOnReady': f'python /app/snapshot.py {cid}',
-            'runOnReadyRestart': True,
-        }
-        if fallback.is_file():
-            paths[cid]['alwaysAvailableFile'] = str(fallback)
-        if cam.get('has_audio', False):
-            # The placeholder and published stream must both contain only H.264.
-            # A source revision restarts the hook when the RTSP address/credentials change.
-            revision = hashlib.sha256(cam['rtsp'].encode()).hexdigest()[:16]
-            paths[cid].update(source='publisher', overridePublisher=False,
-                              runOnInit=f'python /app/relay.py {cid} {revision}', runOnInitRestart=True)
-            local_permissions.append({'action': 'publish', 'path': cid})
+        streams = cam['streams']
+        recording = 'hd' if 'hd' in streams else 'sd'
+        for quality, stream in streams.items():
+            if quality not in ('hd', 'sd'):
+                raise ValueError('Invalid stream quality')
+            name = cid + '-' + quality
+            fallback_name = stream['fallback_file']
+            if Path(fallback_name).name != fallback_name:
+                raise ValueError('Invalid placeholder filename')
+            fallback = DATA / 'fallback' / fallback_name
+            paths[name] = {
+                'source': stream['rtsp'], 'rtspTransport': 'tcp',
+                # Both qualities share one archive; never switch recording on temporary source loss.
+                'record': cam['record'] and quality == recording and not paused,
+                'recordPath': str(ARCHIVE / '%path/%Y-%m-%d_%H-%M-%S-%f'),
+                'alwaysAvailable': fallback.is_file(), 'alwaysAvailableRecorded': False,
+                'runOnAvailable': f'python /app/snapshot.py {name}', 'runOnAvailableRestart': True,
+            }
+            if fallback.is_file():
+                paths[name]['alwaysAvailableFile'] = str(fallback)
+            if stream.get('has_audio', False):
+                revision = hashlib.sha256(stream['rtsp'].encode()).hexdigest()[:16]
+                paths[name].update(source='publisher', overridePublisher=False,
+                                  runOnInit=f'python /app/relay.py {name} {revision}', runOnInitRestart=True)
+                local_permissions.append({'action': 'publish', 'path': name})
     return {
         'logLevel': 'warn', 'logDestinations': ['stdout'],
         'api': True, 'apiAddress': '127.0.0.1:9997',

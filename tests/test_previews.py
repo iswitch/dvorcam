@@ -29,13 +29,13 @@ def test_live_preview_preserves_proportions(preview_installation, size, expected
     assert previews.valid_preview(target, expected)
     assert previews.preview_size(*size) == expected
     value = core.state()
-    value['cameras'] = [{'id': 'cam', 'record': True, 'video': {'width': size[0], 'height': size[1]}}]
+    value['cameras'] = [{'id': 'cam', 'record': True, 'streams': {'hd': {'video': {'width': size[0], 'height': size[1]}}}}]
     core.atomic_json(core.DATA / 'state.json', value)
     client = web.app.test_client()
-    response = client.get('/api/v1/cameras/cam/archive/preview?time=' + str(time.time() - .1))
+    response = client.get('/archive/cam/preview/?time=' + str(time.time() - .1))
     assert response.status_code == 200 and response.data == target.read_bytes()
-    assert client.head('/api/v1/cameras/cam/archive/preview?time=' + str(time.time() - .1)).status_code == 200
-    metadata = client.get('/api/v1/cameras/cam/archive').json['preview']
+    assert client.head('/archive/cam/preview/?time=' + str(time.time() - .1)).status_code == 200
+    metadata = client.get('/archive/cam/').json['preview']
     assert (metadata['width'], metadata['height']) == expected
     original = target.read_bytes()
     target.write_bytes(original[:len(original) // 2])

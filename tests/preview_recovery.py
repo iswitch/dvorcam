@@ -35,10 +35,10 @@ finally:
 
 for _ in range(60):
     try:
-        metadata=json.loads(fetch('/api/v1/cameras/synthetic/archive'))
+        metadata=json.loads(fetch('/archive/synthetic/'))
         size=(metadata['preview']['width'],metadata['preview']['height'])
         for stamp in damaged['times']:
-            with Image.open(BytesIO(fetch('/api/v1/cameras/synthetic/archive/preview?time='+str(stamp)))) as jpeg:
+            with Image.open(BytesIO(fetch('/archive/synthetic/preview/?time='+str(stamp)))) as jpeg:
                 jpeg.load()
                 assert jpeg.size == size and jpeg.width == 240
         break

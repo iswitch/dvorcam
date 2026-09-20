@@ -23,7 +23,7 @@ async def main():
         pc.addTransceiver('video', direction='recvonly')
         pc.addTransceiver('audio', direction='recvonly')
         await pc.setLocalDescription(await pc.createOffer())
-        request = Request('http://gateway:18880/synthetic/whep', data=pc.localDescription.sdp.encode(),
+        request = Request('http://gateway:18880/synthetic-hd/whep', data=pc.localDescription.sdp.encode(),
                           headers={'Content-Type': 'application/sdp'}, method='POST')
         with urlopen(request, timeout=10) as response:
             answer = response.read().decode()

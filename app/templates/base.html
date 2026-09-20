@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ru"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}DvorCam · Камеры{% endblock %}</title>
+<link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+<link rel="icon" type="image/png" sizes="120x120" href="/static/favicon.png">
+<link rel="icon" type="image/svg+xml" sizes="any" href="/static/favicon.svg">
+<script src="/static/theme.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+<link rel="stylesheet" href="/static/style.css">
+{% block head %}{% endblock %}
+</head><body>
+<a class="visually-hidden-focusable skip-link" href="#main">К содержимому</a>
+<header class="app-header"><div class="app-header-inner">
+<a class="brand" href="/admin/" aria-label="DvorCam — камеры"><span class="brand-symbol" aria-hidden="true"><img src="/static/favicon.svg" width="34" height="34" alt=""></span><span class="brand-name">DvorCam</span></a>
+<nav class="app-nav" aria-label="Основные разделы"><a href="/admin/" class="{{ 'active' if view|default('cameras') != 'storage' else '' }}" {{ 'aria-current=page' if view|default('cameras') != 'storage' else '' }}>Камеры</a><a href="/admin/?view=storage" class="{{ 'active' if view|default('') == 'storage' else '' }}" {{ 'aria-current=page' if view|default('') == 'storage' else '' }}>Хранение</a></nav>
+<label class="theme-choice"><span class="visually-hidden">Цветовая тема</span><select class="form-select form-select-sm" data-theme-choice aria-label="Цветовая тема"><option value="auto">Системная тема</option><option value="light">Светлая тема</option><option value="dark">Тёмная тема</option></select></label>
+</div></header>
+<main id="main" class="app-main">{% block content %}{% endblock %}</main>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js" integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI" crossorigin="anonymous"></script>
+<script src="/static/admin.js"></script>
+{% block scripts %}{% endblock %}
+</body></html>

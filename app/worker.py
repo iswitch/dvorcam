@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone
 from urllib.request import urlopen
 
-from core import (DATA, ARCHIVE, CAMERA_ID, SEGMENT_ID, atomic_json, locked,
+from core import (DATA, ARCHIVE, CAMERA_ID, STREAM_ID, SEGMENT_ID, atomic_json, locked,
                   state, storage_available, apply_media, entries)
 
 from previews import make_preview
@@ -65,14 +65,14 @@ def clean_archive(settings, active, now=None):
     used = sum(files.values())
     candidates, indexes = [], {}
     for folder in (ARCHIVE / '.ready').iterdir():
-        if not folder.is_dir() or not CAMERA_ID.fullmatch(folder.name):
+        if not folder.is_dir() or not (CAMERA_ID.fullmatch(folder.name) or STREAM_ID.fullmatch(folder.name)):
             continue
         rows = entries(folder.name)
         indexes[folder.name] = rows
         for row in rows:
-            candidates.append((row['end'], folder.name, row['segment_id'], True))
+            candidates.append((row['end'], folder.name, row['segment_id'], True, folder.name))
     for folder in ARCHIVE.iterdir():
-        if not folder.is_dir() or not CAMERA_ID.fullmatch(folder.name):
+        if not folder.is_dir() or not (CAMERA_ID.fullmatch(folder.name) or STREAM_ID.fullmatch(folder.name)):
             continue
         for source in folder.glob('*.mp4'):
             if not SEGMENT_ID.fullmatch(source.stem) or str(source) in active:
@@ -81,17 +81,19 @@ def clean_archive(settings, active, now=None):
                 continue
             stamp = datetime.strptime(source.stem, '%Y-%m-%d_%H-%M-%S-%f').replace(tzinfo=timezone.utc).timestamp()
             # Unknown/corrupt closed originals must also expire; never let failed remux fill the disk.
-            candidates.append((stamp + 300, folder.name, source.stem, False))
+            match = STREAM_ID.fullmatch(folder.name)
+            cid = match.group(1) if match else folder.name
+            candidates.append((stamp + 300, cid, source.stem, False, folder.name))
     pressured = used > target or shutil.disk_usage(ARCHIVE).free < reserve + min(quota * .05, 1_000_000_000)
-    for end, cid, sid, prepared in sorted(candidates):
+    for end, cid, sid, prepared, raw_folder in sorted(candidates):
         if end >= cutoff and not pressured:
             continue
-        source = ARCHIVE / cid / (sid + '.mp4')
+        source = ARCHIVE / raw_folder / (sid + '.mp4')
         if str(source) in active:
             continue
-        paths = [source, ARCHIVE / '.ready' / cid / (sid + '.mp4')]
+        paths = [ARCHIVE / '.ready' / cid / (sid + '.mp4')] if prepared else [source]
         rows = indexes.get(cid, [])
-        entry = next((e for e in rows if e['segment_id'] == sid), None)
+        entry = next((e for e in rows if e['segment_id'] == sid), None) if prepared else None
         start = entry['start'] if entry else end - 300
         if entry:
             rows = [e for e in rows if e['segment_id'] != sid]
@@ -183,21 +185,23 @@ if __name__ == '__main__':
             if usage['free_bytes'] < value['settings']['reserve_gb'] * 1_000_000_000:
                 usage.update(paused=True, reason='Недостаточно места для записи')
             apply_media(value, paused=usage['paused'])
-            configured_ids = {c['id'] for c in value['cameras']}
+            configured_ids = {c['id'] + '-' + quality for c in value['cameras'] for quality in c['streams']}
             for stale in (ARCHIVE / '.snapshots').glob('*.jpg'):
                 if stale.stem not in configured_ids:
                     stale.unlink(missing_ok=True)
+                    stale.with_suffix('.json').unlink(missing_ok=True)
             # Polling is for camera truth, not for deciding whether an MP4 has closed.
             with urlopen('http://127.0.0.1:9997/v3/paths/list', timeout=3) as response:
                 online = {p['name'] for p in json.load(response)['items'] if p.get('online', p.get('ready', False))}
             if not usage['paused']:
                 for camera in value['cameras']:
                     cid = camera['id']
-                    snapshot = ARCHIVE / '.snapshots' / (cid + '.jpg')
-                    if camera['record'] and cid in online and snapshot.is_file():
+                    name = cid + ('-hd' if 'hd' in camera['streams'] else '-sd')
+                    snapshot = ARCHIVE / '.snapshots' / (name + '.jpg')
+                    if camera['record'] and name in online and snapshot.is_file():
                         modified = snapshot.stat().st_mtime
                         bucket = int(modified // 15) * 15
-                        if time.time() - modified < 3 and previous_preview.get(cid) != bucket:
+                        if time.time() - modified < 30 and previous_preview.get(cid) != bucket:
                             target = ARCHIVE / '.previews' / cid / (str(bucket) + '.jpg')
                             try:
                                 if make_preview(snapshot, target):
@@ -207,7 +211,11 @@ if __name__ == '__main__':
             atomic_json(DATA / 'worker.json', dict(usage, checked_at=time.time(), ok=True, online=list(online), failed_segments=len(failed)))
             # Round-robin one source per camera, including removed cameras' closed recordings.
             for folder in sorted(ARCHIVE.iterdir()):
-                if not folder.is_dir() or not CAMERA_ID.fullmatch(folder.name):
+                match = STREAM_ID.fullmatch(folder.name)
+                if not match:
+                    continue
+                cid = match.group(1)
+                if not folder.is_dir() or not (CAMERA_ID.fullmatch(folder.name) or STREAM_ID.fullmatch(folder.name)):
                     continue
                 for source in sorted(folder.glob('*.mp4')):
                     if not SEGMENT_ID.fullmatch(source.stem) or str(source) in active or time.time() - source.stat().st_mtime < 5:
@@ -219,8 +227,8 @@ if __name__ == '__main__':
                     if str(source) in active_recordings():
                         continue
                     try:
-                        if prepare(source, folder.name, value['settings'], usage['bytes']):
-                            prepared = ARCHIVE / '.ready' / folder.name / source.name
+                        if prepare(source, cid, value['settings'], usage['bytes']):
+                            prepared = ARCHIVE / '.ready' / cid / source.name
                             usage['bytes'] += prepared.stat().st_size - signature[0]
                             failed.pop(source, None)
                     except Exception:
