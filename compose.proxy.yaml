@@ -1,8 +1,9 @@
-# Optional: TLS is managed by an existing reverse proxy on the same host.
+# Optional: TLS is managed by an existing reverse proxy.
 services:
   gateway:
     profiles: [bundled-https]
   dvorcam:
     ports:
-      - '127.0.0.1:9001:9001'
-      - '127.0.0.1:8889:8889'
+      # Keep loopback by default. Set PROXY_BIND_IP only when the proxy is on another host.
+      - '${PROXY_BIND_IP:-127.0.0.1}:9001:9001'
+      - '${PROXY_BIND_IP:-127.0.0.1}:8889:8889'
