@@ -15,12 +15,12 @@ if __name__ == '__main__':
     stream = camera['streams'].get(quality) if camera else None
     if not stream or not stream.get('has_audio') or hashlib.sha256(stream['rtsp'].encode()).hexdigest()[:16] != revision:
         raise SystemExit('Camera configuration changed')
-    # Do not put camera credentials into a shell command or FFmpeg error logs.
+    # MediaMTX reads the credentialed camera URL; FFmpeg argv contains localhost only.
     # exec keeps hook shutdown/restart tied to FFmpeg, without an orphan child process.
     os.execvp('ffmpeg', [
         'ffmpeg', '-nostdin', '-loglevel', 'quiet', '-rtsp_transport', 'tcp',
         '-timeout', '10000000', '-analyzeduration', '1000000', '-probesize', '1000000',
-        '-i', stream['rtsp'], '-map', '0:v:0', '-c:v', 'copy', '-an',
+        '-i', 'rtsp://127.0.0.1:8554/' + name + '-source', '-map', '0:v:0', '-c:v', 'copy', '-an',
         '-flush_packets', '1', '-f', 'rtsp', '-rtsp_transport', 'tcp',
         'rtsp://127.0.0.1:8554/' + name,
     ])

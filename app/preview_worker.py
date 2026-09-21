@@ -6,7 +6,7 @@ import os
 import subprocess
 import time
 
-from core import DATA, ARCHIVE, CAMERA_ID, SEGMENT_ID, atomic_json, entries, state
+from core import DATA, ARCHIVE, CAMERA_ID, SEGMENT_ID, atomic_json, entries, locked, state
 from previews import make_preview, preview_size, preview_writable, valid_preview
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
@@ -58,11 +58,25 @@ if __name__ == '__main__':
                         if source in retries and retries[source][0] == signature and retries[source][1] > time.monotonic():
                             continue
                         if source not in sources or sources[source][0] != signature:
-                            result = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
-                                '-show_entries', 'stream=width,height', '-of', 'json', str(source)],
-                                capture_output=True, check=True, timeout=15)
-                            video = json.loads(result.stdout)['streams'][0]
-                            size = preview_size(video['width'], video['height'])
+                            try:
+                                size = preview_size(int(row['video_width']), int(row['video_height']))
+                            except (KeyError, TypeError, ValueError):
+                                result = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                                    '-show_entries', 'stream=width,height', '-of', 'json', str(source)],
+                                    capture_output=True, check=True, timeout=15)
+                                video = json.loads(result.stdout)['streams'][0]
+                                width, height = int(video['width']), int(video['height'])
+                                size = preview_size(width, height)
+                                row.update(video_width=width, video_height=height)
+                                # Old indexes learn dimensions once; future restarts avoid probing every MP4.
+                                with locked():
+                                    current_rows = entries(folder.name)
+                                    current = next((item for item in current_rows if item.get('segment_id') == sid), None)
+                                    if current is not None:
+                                        current.update(video_width=width, video_height=height)
+                                        atomic_json(folder / 'index.json', current_rows)
+                                # Keep the one-time migration from monopolizing a CPU core.
+                                time.sleep(.25)
                             sources[source] = (signature, size)
                         size = sources[source][1]
                         for bucket in range(int(max(start, cutoff) // 15) * 15, math.ceil(end / 15) * 15, 15):

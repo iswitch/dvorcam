@@ -34,7 +34,8 @@ def test_variants_record_only_selected_source_and_group_admin(installation, monk
     camera = core.state()['cameras'][0]
     assert set(camera['streams']) == set(qualities)
     config = core.media_config(core.state())
-    assert set(config['paths']) == {'entrance-' + q for q in qualities}
+    public_paths = {'entrance-' + q for q in qualities}
+    assert set(config['paths']) == public_paths | {name + '-source' for name in public_paths}
     selected = 'hd' if 'hd' in qualities else 'sd'
     for quality in qualities:
         path = config['paths']['entrance-' + quality]
@@ -43,6 +44,8 @@ def test_variants_record_only_selected_source_and_group_admin(installation, monk
         assert path['runOnAvailable'] == 'python /app/snapshot.py entrance-' + quality
         assert not path['alwaysAvailableRecorded']
         assert not core.media_config(core.state(), paused=True)['paths']['entrance-' + quality]['record']
+        source = config['paths']['entrance-' + quality + '-source']
+        assert source == {'source': f'rtsp://camera/{quality}', 'rtspTransport': 'tcp'}
     html = client.get('/admin/', headers=AUTH).text
     assert 'Courtyard' in html and 'camera-search' in html
     for quality in ('hd', 'sd'):
@@ -66,7 +69,7 @@ def test_variants_record_only_selected_source_and_group_admin(installation, monk
         client.post('/admin/camera', headers=AUTH, data={'csrf': csrf, 'id': 'entrance', 'editing': 'entrance',
             'name': 'Renamed', 'remove_hd': 'yes', 'record': 'on'})
         paths = core.media_config(core.state())['paths']
-        assert set(paths) == {'entrance-sd'} and paths['entrance-sd']['record']
+        assert set(paths) == {'entrance-sd', 'entrance-sd-source'} and paths['entrance-sd']['record']
     before = core.state()
     client.post('/admin/camera', headers=AUTH, data={'csrf': csrf, 'id': 'entrance', 'editing': 'entrance',
         'name': 'Renamed', 'remove_hd': 'yes', 'remove_sd': 'yes'})

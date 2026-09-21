@@ -2,6 +2,7 @@
 import os
 import sys
 import time
+import zlib
 
 import av
 from core import ARCHIVE, STREAM_ID, atomic_json, storage_available
@@ -18,7 +19,9 @@ try:
         video.codec_context.thread_count = 1
         # Skip non-key frames inside the decoder, before spending CPU reconstructing them.
         video.codec_context.skip_frame = 'NONKEY'
-        next_snapshot = next_heartbeat = 0
+        # Spread camera decoders across the interval instead of creating a periodic CPU spike.
+        next_snapshot = time.monotonic() + zlib.crc32(cid.encode()) % 5
+        next_heartbeat = 0
         for packet in source.demux(video):
             now = time.monotonic()
             if now >= next_heartbeat:
@@ -27,14 +30,16 @@ try:
                 # Packet freshness is separate from JPEG age: long GOPs are not source failure.
                 atomic_json(target.with_suffix('.json'), {'checked_at': time.time()})
                 next_heartbeat = now + 1
+            # Do not invoke the decoder for every keyframe when a camera sends them too often.
+            # A five-second JPEG interval keeps camera grids useful without a decoder per FPS.
+            if now < next_snapshot:
+                continue
             for frame in packet.decode():
-                if now < next_snapshot:
-                    continue
                 # A fresh encoder preserves dimensions after source/placeholder changes.
                 with frame.to_image() as image:
                     image.save(temporary, format='JPEG', quality=80)
                 os.replace(temporary, target)
-                next_snapshot = now + 1
+                next_snapshot = now + 5
 except (av.FFmpegError, OSError) as error:
     print('Snapshot stopped: ' + type(error).__name__, file=sys.stderr)
     raise SystemExit(1)

@@ -19,7 +19,8 @@ def inside(code):
 
 
 def paths():
-    return json.loads(inside("from urllib.request import urlopen; print(urlopen('http://127.0.0.1:9997/v3/config/paths/list').read().decode())"))['items']
+    items = json.loads(inside("from urllib.request import urlopen; print(urlopen('http://127.0.0.1:9997/v3/config/paths/list').read().decode())"))['items']
+    return [item for item in items if not item['name'].endswith('-source')]
 
 
 def wait_for(check, seconds=40):
@@ -54,6 +55,13 @@ form = {'csrf': token, 'id': 'synthetic', 'editing': 'synthetic', 'name': 'Synth
 fetch('/admin/camera', dict(form, rtsp_hd='rtsp://camera:8554/test', rtsp_sd='rtsp://camera:8554/sd', record='on'))
 wait_for(lambda: {p['name']: p['record'] for p in paths()} == {'synthetic-hd': True, 'synthetic-sd': False})
 assert {p['name']: p['record'] for p in paths()} == {'synthetic-hd': True, 'synthetic-sd': False}
+configured = json.loads(inside("from urllib.request import urlopen; print(urlopen('http://127.0.0.1:9997/v3/config/paths/list').read().decode())"))['items']
+assert {item['name'] for item in configured} == {
+    'synthetic-hd', 'synthetic-sd', 'synthetic-hd-source', 'synthetic-sd-source'}
+commands = inside("from pathlib import Path; print('\\n'.join(p.read_bytes().replace(b'\\0', b' ').decode(errors='replace') for p in Path('/proc').glob('[0-9]*/cmdline') if p.is_file()))")
+assert 'rtsp://camera:8554/' not in commands
+assert 'rtsp://127.0.0.1:8554/synthetic-hd-source' in commands
+assert 'rtsp://127.0.0.1:8554/synthetic-sd-source' in commands
 wait_for(lambda: jpeg_size('hd') == (1280, 720) and jpeg_size('sd') == (640, 480))
 for quality in ('hd', 'sd'):
     assert b'<video' in urlopen(base + '/synthetic-' + quality + '/').read()

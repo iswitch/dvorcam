@@ -117,6 +117,8 @@ def test_restart_repairs_missing_corrupt_and_wrong_size_previews(preview_install
             assert targets[0].stat().st_mtime_ns == good_stamp
             assert hashlib.sha256(source.read_bytes()).hexdigest() == original
             assert not list(targets[0].parent.glob('*.tmp.jpg'))
+            row = core.entries('cam')[0]
+            assert (row['video_width'], row['video_height']) == (320, 240)
         finally:
             process.terminate()
             process.communicate(timeout=20)

@@ -96,9 +96,13 @@ def media_config(value, paused=False):
                 paths[name]['alwaysAvailableFile'] = str(fallback)
             if stream.get('has_audio', False):
                 revision = hashlib.sha256(stream['rtsp'].encode()).hexdigest()[:16]
+                source_name = name + '-source'
+                # MediaMTX keeps camera credentials in its 0600 config; relay argv only sees localhost.
+                paths[source_name] = {'source': stream['rtsp'], 'rtspTransport': 'tcp'}
                 paths[name].update(source='publisher', overridePublisher=False,
                                   runOnInit=f'python /app/relay.py {name} {revision}', runOnInitRestart=True)
-                local_permissions.append({'action': 'publish', 'path': name})
+                local_permissions.extend(({'action': 'read', 'path': source_name},
+                                          {'action': 'publish', 'path': name}))
     return {
         'logLevel': 'warn', 'logDestinations': ['stdout'],
         'api': True, 'apiAddress': '127.0.0.1:9997',
@@ -109,7 +113,8 @@ def media_config(value, paused=False):
         'webrtcLocalUDPAddress': ':8189', 'webrtcLocalTCPAddress': ':8189',
         'webrtcAdditionalHosts': [host], 'webrtcAllowOrigins': [PUBLIC_URL],
         'authInternalUsers': [
-            {'user': 'any', 'permissions': [{'action': 'read'}]},
+            # Internal camera-source paths never pass anonymous RTSP/WebRTC authorization.
+            {'user': 'any', 'permissions': [{'action': 'read', 'path': '~^[A-Za-z0-9_-]+-(hd|sd)$'}]},
             {'user': 'any', 'ips': ['127.0.0.1', '::1'], 'permissions': local_permissions},
         ],
         'pathDefaults': {

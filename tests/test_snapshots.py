@@ -21,7 +21,7 @@ def changing_stream(tmp_path):
     with stream.open('wb') as output:
         for size, color in stages:
             result = subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
-                f'color=c={color}:size={size}:rate=4', '-t', '2', '-c:v', 'libx264',
+                f'color=c={color}:size={size}:rate=4', '-t', '6', '-c:v', 'libx264',
                 '-preset', 'ultrafast', '-threads', '1', '-bf', '0', '-g', '4',
                 '-f', 'h264', 'pipe:1'], capture_output=True, check=True)
             output.write(result.stdout)
@@ -37,11 +37,20 @@ def test_snapshots_follow_current_frame_dimensions(installation, changing_stream
     replace = os.replace
     source = av.open(str(stream))
     clock = [0]
+    decode_calls = []
+
+    class Packet:
+        def __init__(self, packet):
+            self.packet = packet
+
+        def decode(self):
+            decode_calls.append(clock[0])
+            return self.packet.decode()
 
     def packets_with_clock(*args):
-        for index, frame in enumerate(source.demux(video=0)):
+        for index, packet in enumerate(source.demux(video=0)):
             clock[0] = index / 4
-            yield frame
+            yield Packet(packet)
 
     @contextmanager
     def open_stream(*args, **kwargs):
@@ -73,8 +82,12 @@ def test_snapshots_follow_current_frame_dimensions(installation, changing_stream
             assert stopped.value.code == 1
         else:
             runpy.run_path(str(Path(core.__file__).with_name('snapshot.py')))
-    expected = [tuple(map(int, size.split('x'))) for size, _ in stages for _ in range(2)]
-    assert sizes == (expected[:3] if lose_storage else expected)
+    expected = {tuple(map(int, size.split('x'))) for size, _ in stages}
+    if lose_storage:
+        assert len(sizes) == 3
+    else:
+        assert set(sizes) == expected
+    assert all(current - previous >= 5 for previous, current in zip(decode_calls, decode_calls[1:]))
     assert not list(target.parent.glob('*.tmp'))
     if not lose_storage:
         value = core.state()

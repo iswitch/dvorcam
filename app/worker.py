@@ -147,8 +147,10 @@ def prepare(source, cid, settings, used_bytes=None):
         if (current.st_size, current.st_mtime_ns) != (original.st_size, original.st_mtime_ns):
             raise RuntimeError('Source changed during preparation')
         start = datetime.strptime(source.stem, '%Y-%m-%d_%H-%M-%S-%f').replace(tzinfo=timezone.utc).timestamp()
+        video = next(stream for stream in after['streams'] if stream['codec_type'] == 'video')
         entry = {'segment_id': source.stem, 'start': start, 'end': start + duration, 'duration': duration,
-                 'size_bytes': temporary.stat().st_size, 'source_size': original.st_size}
+                 'size_bytes': temporary.stat().st_size, 'source_size': original.st_size,
+                 'video_width': int(video['width']), 'video_height': int(video['height'])}
         with locked():
             if not storage_available():
                 raise RuntimeError('Archive directory unavailable')

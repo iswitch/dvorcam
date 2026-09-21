@@ -62,7 +62,7 @@ def home():
 
 @app.route('/healthz')
 def health():
-    return jsonify(status='ok', version='0.3.0')
+    return jsonify(status='ok', version='0.3.1')
 
 
 @app.route('/admin/')

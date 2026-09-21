@@ -158,6 +158,7 @@ def test_real_ffmpeg_remux_and_corrupt_original_retained(installation, monkeypat
     entry = core.entries('cam')[0]
     output = core.ARCHIVE / '.ready/cam' / (entry['segment_id'] + '.mp4')
     assert output.is_file() and abs(entry['duration'] - 2) < .1
+    assert (entry['video_width'], entry['video_height']) == (320, 180)
     source.write_bytes(b'broken recording')
     with pytest.raises(subprocess.CalledProcessError):
         worker.prepare(source, 'cam', core.DEFAULT_SETTINGS)
@@ -293,9 +294,12 @@ def test_camera_audio_detection_and_offline_edit(installation, monkeypatch, audi
     assert path['alwaysAvailable'] and not path['alwaysAvailableRecorded']
     if audio_codec:
         assert path['source'] == 'publisher' and path['runOnInitRestart']
+        assert config['paths']['camera-sd-source']['source'] == form['rtsp_sd']
         assert config['authInternalUsers'][1]['ips'] == ['127.0.0.1', '::1']
+        assert {'action': 'read', 'path': 'camera-sd-source'} in config['authInternalUsers'][1]['permissions']
         assert {'action': 'publish', 'path': 'camera-sd'} in config['authInternalUsers'][1]['permissions']
-        assert all(p['action'] == 'read' for p in config['authInternalUsers'][0]['permissions'])
+        assert config['authInternalUsers'][0]['permissions'] == [
+            {'action': 'read', 'path': '~^[A-Za-z0-9_-]+-(hd|sd)$'}]
     else:
         assert path['source'] == form['rtsp_sd'] and 'runOnInit' not in path
 
@@ -319,7 +323,7 @@ def test_audio_relay_source_revision_and_streamcopy(installation, monkeypatch):
     import sys
     core, web, worker = installation
     value = core.state()
-    camera = {'id': 'cam', 'record': True, 'streams': {'sd': {'rtsp': 'rtsp://camera/live?channel=1&audio=on', 'has_audio': True, 'fallback_file': 'cam.mp4'}}}
+    camera = {'id': 'cam', 'record': True, 'streams': {'sd': {'rtsp': 'rtsp://user:secret@camera/live?channel=1&audio=on', 'has_audio': True, 'fallback_file': 'cam.mp4'}}}
     value['cameras'] = [camera]
     original = core.media_config(value)['paths']['cam-sd']['runOnInit']
     camera['streams']['sd']['rtsp'] = 'rtsp://camera/other'
@@ -331,7 +335,8 @@ def test_audio_relay_source_revision_and_streamcopy(installation, monkeypatch):
     monkeypatch.setattr(os, 'execvp', lambda executable, args: executed.append(args))
     runpy.run_path(str(Path(core.__file__).with_name('relay.py')), run_name='__main__')
     args = executed[0]
-    assert args[args.index('-i') + 1] == camera['streams']['sd']['rtsp']
+    assert args[args.index('-i') + 1] == 'rtsp://127.0.0.1:8554/cam-sd-source'
+    assert all('user' not in arg and 'secret' not in arg for arg in args)
     assert args[args.index('-c:v') + 1] == 'copy'
     assert args[args.index('-map') + 1] == '0:v:0' and '-an' in args
     assert args[-1] == 'rtsp://127.0.0.1:8554/cam-sd'

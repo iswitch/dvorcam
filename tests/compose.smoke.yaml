@@ -1,7 +1,7 @@
 name: dvorcam-smoke
 services:
   dvorcam:
-    image: dvorcam:0.3.0
+    image: dvorcam:0.3.1
     environment:
       PUBLIC_URL: http://localhost:18880
       ADMIN_USERNAME: admin
@@ -35,7 +35,7 @@ services:
       MTX_SRT: 'no'
       MTX_MOQ: 'no'
   feed:
-    image: dvorcam:0.3.0
+    image: dvorcam:0.3.1
     entrypoint: ffmpeg
     command: ['-re', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=10', '-c:v', 'libx264', '-bf', '0', '-g', '10', '-threads', '1', '-f', 'rtsp', '-rtsp_transport', 'tcp', 'rtsp://camera:8554/test']
     depends_on:
