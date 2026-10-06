@@ -34,6 +34,7 @@ def test_snapshots_follow_current_frame_dimensions(installation, changing_stream
     stream, stages = changing_stream
     target = core.ARCHIVE / '.snapshots/cam-sd.jpg'
     sizes = []
+    published_at = []
     replace = os.replace
     source = av.open(str(stream))
     clock = [0]
@@ -42,6 +43,7 @@ def test_snapshots_follow_current_frame_dimensions(installation, changing_stream
     class Packet:
         def __init__(self, packet):
             self.packet = packet
+            self.is_keyframe = packet.is_keyframe
 
         def decode(self):
             decode_calls.append(clock[0])
@@ -67,6 +69,7 @@ def test_snapshots_follow_current_frame_dimensions(installation, changing_stream
         with Image.open(temporary) as current:
             current.load()
             sizes.append(current.size)
+            published_at.append(clock[0])
         replace(temporary, destination)
         if lose_storage and len(sizes) == 3:
             (core.ARCHIVE / '.dvorcam-storage').unlink()
@@ -87,7 +90,11 @@ def test_snapshots_follow_current_frame_dimensions(installation, changing_stream
         assert len(sizes) == 3
     else:
         assert set(sizes) == expected
-    assert all(current - previous >= 5 for previous, current in zip(decode_calls, decode_calls[1:]))
+        # A source with one keyframe per second must actually publish at that cadence.
+        assert len(published_at) >= 25
+        assert all(1 <= current - previous <= 1.25
+                   for previous, current in zip(published_at, published_at[1:]))
+    assert all(current - previous >= 1 for previous, current in zip(decode_calls, decode_calls[1:]))
     assert not list(target.parent.glob('*.tmp'))
     if not lose_storage:
         value = core.state()
