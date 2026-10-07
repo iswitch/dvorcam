@@ -1,7 +1,7 @@
 name: dvorcam
 services:
   dvorcam:
-    image: dvorcam:0.3.2
+    image: dvorcam:0.3.3
     restart: unless-stopped
     stop_grace_period: 180s
     environment:
@@ -9,6 +9,7 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME:?Set ADMIN_USERNAME in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
       WEBRTC_PUBLIC_HOST: ${WEBRTC_PUBLIC_HOST:-}
+      RTSP_DOCKER_ACCESS: ${RTSP_DOCKER_ACCESS:-false}
       ARCHIVE_HOST_PATH: ${ARCHIVE_HOST_PATH:-./archive}
       TZ: UTC
     volumes:

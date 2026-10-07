@@ -70,6 +70,9 @@ def storage_available():
 
 def media_config(value, paused=False):
     host = os.environ.get('WEBRTC_PUBLIC_HOST') or urlsplit(PUBLIC_URL).hostname
+    rtsp_docker_access = os.environ.get('RTSP_DOCKER_ACCESS', 'false').strip().lower()
+    if rtsp_docker_access not in ('true', 'false'):
+        raise ValueError('RTSP_DOCKER_ACCESS must be true or false')
     paths = {}
     local_permissions = [{'action': 'api'}]
     for cam in value['cameras']:
@@ -107,7 +110,9 @@ def media_config(value, paused=False):
         'logLevel': 'warn', 'logDestinations': ['stdout'],
         'api': True, 'apiAddress': '127.0.0.1:9997',
         'metrics': False, 'pprof': False, 'playback': False,
-        'rtsp': True, 'rtspAddress': '127.0.0.1:8554', 'rtspTransports': ['tcp'],
+        # Keep localhost RTSP for snapshots/relays; opt in to reads from trusted Docker peers.
+        'rtsp': True, 'rtspAddress': '0.0.0.0:8554' if rtsp_docker_access == 'true' else '127.0.0.1:8554',
+        'rtspTransports': ['tcp'],
         'rtmp': False, 'hls': False, 'srt': False, 'moq': False,
         'webrtc': True, 'webrtcAddress': ':8889',
         'webrtcLocalUDPAddress': ':8189', 'webrtcLocalTCPAddress': ':8189',
