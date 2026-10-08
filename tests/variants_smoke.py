@@ -49,6 +49,9 @@ def last_video_size():
 wait_for(lambda: bool(fetch('/healthz')))
 page = fetch('/admin/').decode()
 assert 'Камер пока нет' in page
+# Explicitly prepare this disposable test volume before expecting recording.
+subprocess.run(['docker', 'exec', container, 'chown', '1000:1000', '/archive'], check=True)
+subprocess.run(['docker', 'exec', '-u', '1000:1000', container, 'python', '/app/prepare_storage.py'], check=True)
 form_page = fetch('/admin/?new=1').decode()
 token = re.search(r'name="csrf" value="([^"]+)"', form_page)[1]
 form = {'csrf': token, 'id': 'synthetic', 'editing': 'synthetic', 'name': 'Synthetic camera', 'group': 'Courtyard'}

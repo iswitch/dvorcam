@@ -12,13 +12,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'app'))
 def installation(tmp_path, monkeypatch):
     monkeypatch.setenv('DVORCAM_DATA', str(tmp_path / 'data'))
     monkeypatch.setenv('DVORCAM_ARCHIVE', str(tmp_path / 'archive'))
+    monkeypatch.setenv('DVORCAM_SNAPSHOTS', str(tmp_path / 'ram'))
     monkeypatch.setenv('PUBLIC_URL', 'http://localhost')
     monkeypatch.setenv('ADMIN_USERNAME', 'admin')
     monkeypatch.setenv('ADMIN_PASSWORD', 'a-test-password-not-production')
     import core
     importlib.reload(core)
     for path in (core.DATA, core.DATA / 'runtime', core.DATA / 'fallback', core.ARCHIVE,
-                 core.ARCHIVE / '.ready', core.ARCHIVE / '.previews', core.ARCHIVE / '.snapshots'):
+                 core.ARCHIVE / '.ready', core.ARCHIVE / '.previews', core.ARCHIVE / '.snapshots', core.SNAPSHOTS, core.LAST_FRAMES):
         path.mkdir(parents=True, exist_ok=True)
     (core.DATA / 'storage-id').write_text('test-storage')
     (core.ARCHIVE / '.dvorcam-storage').write_text('test-storage')

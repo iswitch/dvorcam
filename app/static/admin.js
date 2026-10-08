@@ -1,4 +1,7 @@
 (() => {
+    document.querySelectorAll('[data-frame-time]').forEach(element => {
+        element.textContent = new Date(element.dateTime).toLocaleString();
+    });
     const search = document.querySelector('#camera-search');
     const status = document.querySelector('#status-filter');
     let selectedGroup = '*';
@@ -65,10 +68,10 @@
             // Keep entered credentials in the form only; a failed probe must not erase the user's edits.
             const response = await fetch(cameraForm.action, {method: 'POST', body: data});
             const target = new URL(response.url);
-            message = target.searchParams.get('error') || (!response.ok ? 'Не удалось сохранить камеру. Проверьте подключение и попробуйте ещё раз.' : '');
+            message = target.searchParams.get('error') || (!response.ok ? 'Не удалось сохранить камеру.' : '');
             if (!message) { window.location.assign(response.url); return; }
         } catch (_) {
-            message = 'Нет связи с сервером. Введённые данные сохранены в форме — попробуйте ещё раз.';
+            message = 'Сервер недоступен. Данные остались в форме.';
         } finally {
             button.disabled = false;
             button.textContent = original;
@@ -88,7 +91,7 @@
         if (!button) return;
         button.disabled = true;
         button.dataset.originalText = button.textContent;
-        button.textContent = button.dataset.busyText || 'Сохраняем…';
+        button.textContent = button.dataset.busyText || 'Сохранение…';
         form.setAttribute('aria-busy', 'true');
     }));
     window.addEventListener('pageshow', () => {

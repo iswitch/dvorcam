@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 from PIL import Image
-from core import DATA, ARCHIVE, locked, state, storage_available
+from core import DATA, ARCHIVE, locked, state, retention_days, storage_available
 
 
 def preview_size(width, height):
@@ -65,7 +65,7 @@ def make_preview(source, target, size=None, offset=None):
             raise ValueError('Invalid generated preview')
         with locked():
             # Cleanup owns archive deletion. Never resurrect a preview after it removed its source.
-            cutoff = time.time() - state()['settings']['retention_days'] * 86400
+            cutoff = time.time() - retention_days(state(), target.parent.name) * 86400
             if not preview_writable() or not source.is_file() or int(target.stem) + 15 <= cutoff:
                 return False
             os.replace(temporary, target)

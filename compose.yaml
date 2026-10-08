@@ -1,7 +1,7 @@
 name: dvorcam
 services:
   dvorcam:
-    image: dvorcam:0.3.3
+    image: dvorcam:0.3.5
     restart: unless-stopped
     stop_grace_period: 180s
     environment:
@@ -14,7 +14,13 @@ services:
       TZ: UTC
     volumes:
       - data:/data
-      - ${ARCHIVE_HOST_PATH:-./archive}:/archive
+      - type: bind
+        source: ${ARCHIVE_HOST_PATH:-./archive}
+        target: /archive
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /run/dvorcam/snapshots:rw,noexec,nosuid,size=64m,mode=0700,uid=1000,gid=1000
     ports:
       - '8189:8189/udp'
       - '8189:8189/tcp'

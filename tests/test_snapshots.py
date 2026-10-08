@@ -32,7 +32,7 @@ def changing_stream(tmp_path):
 def test_snapshots_follow_current_frame_dimensions(installation, changing_stream, monkeypatch, lose_storage):
     core, web, worker = installation
     stream, stages = changing_stream
-    target = core.ARCHIVE / '.snapshots/cam-sd.jpg'
+    target = core.SNAPSHOTS / 'cam-sd.jpg'
     sizes = []
     published_at = []
     replace = os.replace
@@ -79,21 +79,13 @@ def test_snapshots_follow_current_frame_dimensions(installation, changing_stream
         patch.setattr(os, 'replace', publish)
         patch.setattr(sys, 'argv', ['snapshot.py', 'cam-sd'])
         patch.setattr(time, 'monotonic', lambda: clock[0])
-        if lose_storage:
-            with pytest.raises(SystemExit) as stopped:
-                runpy.run_path(str(Path(core.__file__).with_name('snapshot.py')))
-            assert stopped.value.code == 1
-        else:
-            runpy.run_path(str(Path(core.__file__).with_name('snapshot.py')))
+        runpy.run_path(str(Path(core.__file__).with_name('snapshot.py')))
     expected = {tuple(map(int, size.split('x'))) for size, _ in stages}
-    if lose_storage:
-        assert len(sizes) == 3
-    else:
-        assert set(sizes) == expected
-        # A source with one keyframe per second must actually publish at that cadence.
-        assert len(published_at) >= 25
-        assert all(1 <= current - previous <= 1.25
-                   for previous, current in zip(published_at, published_at[1:]))
+    assert set(sizes) == expected
+    assert len(published_at) >= 25
+    assert all(1 <= current - previous <= 1.25
+               for previous, current in zip(published_at, published_at[1:]))
+    assert (core.LAST_FRAMES / 'cam-sd.jpg').exists()
     assert all(current - previous >= 1 for previous, current in zip(decode_calls, decode_calls[1:]))
     assert not list(target.parent.glob('*.tmp'))
     if not lose_storage:
@@ -104,3 +96,43 @@ def test_snapshots_follow_current_frame_dimensions(installation, changing_stream
         for url in ('/cam-sd.jpg/',):
             assert client.get(url).data == target.read_bytes()
             assert client.head(url).status_code == 200
+
+
+@pytest.mark.parametrize('disk_failure', [False, True])
+def test_disk_fallback_throttled_and_failure_keeps_live(installation, monkeypatch, disk_failure):
+    core, _, _ = installation
+    clock, live_writes, saves = [0], [], []
+    image = Image.new('RGB', (64, 48), 'red')
+    packet = SimpleNamespace(is_keyframe=True, decode=lambda: [SimpleNamespace(to_image=lambda: image.copy())])
+    def demux(*args):
+        for second in range(96):
+            clock[0] = second
+            yield packet
+    codec = SimpleNamespace(thread_count=0, skip_frame='')
+    @contextmanager
+    def open_stream(*args, **kwargs):
+        yield SimpleNamespace(streams=SimpleNamespace(video=[SimpleNamespace(codec_context=codec)]), demux=demux)
+    real_replace = os.replace
+    def replace(source, destination):
+        if destination == core.SNAPSHOTS / 'cam-sd.jpg':
+            live_writes.append(clock[0])
+        if destination == core.LAST_FRAMES / 'cam-sd.jpg':
+            saves.append(clock[0])
+            if disk_failure:
+                raise OSError('failed system fallback write')
+        return real_replace(source, destination)
+    monkeypatch.setattr(av, 'open', open_stream)
+    monkeypatch.setattr(os, 'replace', replace)
+    monkeypatch.setattr(sys, 'argv', ['snapshot.py', 'cam-sd'])
+    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
+    script = str(Path(core.__file__).with_name('snapshot.py'))
+    runpy.run_path(script)
+    assert len(live_writes) >= 90
+    assert len(saves) == 4 and all(b - a >= 30 for a, b in zip(saves, saves[1:]))
+    if not disk_failure:
+        # Restart immediately: the persisted timestamp prevents another immediate SSD write.
+        saves.clear()
+        clock[0] = 0
+        runpy.run_path(script)
+        assert saves[0] >= 30
+    assert codec.skip_frame == 'NONKEY' and codec.thread_count == 1

@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -14,6 +15,8 @@ import yaml
 
 DATA = Path(os.environ.get('DVORCAM_DATA', '/data'))
 ARCHIVE = Path(os.environ.get('DVORCAM_ARCHIVE', '/archive'))
+SNAPSHOTS = Path(os.environ.get('DVORCAM_SNAPSHOTS', '/run/dvorcam/snapshots'))
+LAST_FRAMES = DATA / 'last-frames'
 MEDIAMTX = os.environ.get('MEDIAMTX_BIN', '/usr/local/bin/mediamtx')
 PUBLIC_URL = os.environ.get('PUBLIC_URL', '').rstrip('/')
 CAMERA_ID = re.compile(r'[A-Za-z0-9_-]{1,80}')
@@ -63,9 +66,33 @@ def state():
 
 def storage_available():
     try:
-        return (ARCHIVE / '.dvorcam-storage').read_text() == (DATA / 'storage-id').read_text()
+        return (not ARCHIVE.is_symlink() and not (ARCHIVE / '.dvorcam-storage').is_symlink()
+                and (ARCHIVE / '.dvorcam-storage').read_text() == (DATA / 'storage-id').read_text())
     except OSError:
         return False
+
+
+def retention_days(value, cid):
+    # Missing/null overrides inherit future global changes, not a copy of today's default.
+    camera = next((c for c in value['cameras'] if c['id'] == cid), {})
+    return camera.get('retention_days') or value['settings']['retention_days']
+
+
+def snapshot_status(name):
+    path = SNAPSHOTS / (name + '.jpg')
+    try:
+        heartbeat = json.loads(path.with_suffix('.json').read_text())
+        stamp = path.stat().st_mtime
+        if 0 <= time.time() - heartbeat['checked_at'] <= 5 and 0 <= time.time() - stamp <= 30:
+            return path, True, stamp
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    # Disk fallback survives restart; stale RAM must never masquerade as a live image.
+    path = LAST_FRAMES / (name + '.jpg')
+    try:
+        return path, False, path.stat().st_mtime
+    except OSError:
+        return None, False, None
 
 
 def media_config(value, paused=False):
@@ -93,7 +120,8 @@ def media_config(value, paused=False):
                 'record': cam['record'] and quality == recording and not paused,
                 'recordPath': str(ARCHIVE / '%path/%Y-%m-%d_%H-%M-%S-%f'),
                 'alwaysAvailable': fallback.is_file(), 'alwaysAvailableRecorded': False,
-                'runOnAvailable': f'python /app/snapshot.py {name}', 'runOnAvailableRestart': True,
+                # Available includes NO SIGNAL; online hooks stop before synthetic frames overwrite JPG.
+                'runOnOnline': f'python /app/snapshot.py {name}', 'runOnOnlineRestart': True,
             }
             if fallback.is_file():
                 paths[name]['alwaysAvailableFile'] = str(fallback)

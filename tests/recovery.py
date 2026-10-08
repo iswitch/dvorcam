@@ -6,6 +6,7 @@ import subprocess
 import time
 from pathlib import Path
 from smoke import fetch
+from urllib.request import urlopen
 
 project = os.environ.get('DVORCAM_TEST_PROJECT', 'dvorcam-smoke')
 compose = ['docker-compose', '-p', project, '-f', str(Path(__file__).with_name('compose.smoke.yaml'))]
@@ -31,7 +32,11 @@ if __name__ == '__main__':
         count = len(json.loads(fetch('/archive/synthetic/'))['clips'])
         time.sleep(8)
         assert len(json.loads(fetch('/archive/synthetic/'))['clips']) == count
-        print('PASS: NO SIGNAL remains playable via WebRTC and is not recorded', flush=True)
+        with urlopen('http://127.0.0.1:18880/synthetic-hd.jpg/status/') as response:
+            status = json.load(response)
+        assert not status['live'] and status['has_image']
+        assert fetch('/synthetic-hd.jpg/')[:2] == b'\xff\xd8'
+        print('PASS: NO SIGNAL remains playable, is not recorded; JPG falls back to disk', flush=True)
     finally:
         subprocess.run(compose + ['start', 'feed'], check=True, stdout=subprocess.DEVNULL)
     inside("from pathlib import Path; Path('/archive/.dvorcam-storage').rename('/archive/.storage-offline')")
@@ -39,7 +44,17 @@ if __name__ == '__main__':
         time.sleep(6)
         configuration = json.loads(inside("from urllib.request import urlopen; print(urlopen('http://127.0.0.1:9997/v3/config/paths/get/synthetic-hd').read().decode())"))
         assert configuration['record'] is False
-        print('PASS: missing storage marker stops recording', flush=True)
+        assert fetch('/synthetic-hd.jpg/')[:2] == b'\xff\xd8'
+        subprocess.run(['docker', 'restart', container], check=True, stdout=subprocess.DEVNULL)
+        for _ in range(30):
+            try:
+                assert fetch('/synthetic-hd.jpg/')[:2] == b'\xff\xd8'
+                break
+            except Exception:
+                time.sleep(2)
+        else:
+            raise AssertionError('Live did not restart without the archive marker')
+        print('PASS: missing storage marker stops recording, live/JPG restart without archive', flush=True)
     finally:
         inside("from pathlib import Path; Path('/archive/.storage-offline').rename('/archive/.dvorcam-storage')")
     time.sleep(6)

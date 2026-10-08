@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from urllib.request import urlopen
 
 from core import (DATA, ARCHIVE, CAMERA_ID, STREAM_ID, SEGMENT_ID, atomic_json, locked,
-                  state, storage_available, apply_media, entries)
+                  state, storage_available, apply_media, entries, retention_days, SNAPSHOTS, LAST_FRAMES)
 
 from previews import make_preview
 
@@ -56,7 +56,7 @@ def inventory():
 
 def clean_archive(settings, active, now=None):
     now = time.time() if now is None else now
-    cutoff = now - settings['retention_days'] * 86400
+    policy = dict(state(), settings=settings)
     quota = int(settings['max_gb'] * 1_000_000_000)
     reserve = int(settings['reserve_gb'] * 1_000_000_000)
     # Start deleting before the cap: this is a soft quota with room for live segments/remux.
@@ -86,6 +86,7 @@ def clean_archive(settings, active, now=None):
             candidates.append((stamp + 300, cid, source.stem, False, folder.name))
     pressured = used > target or shutil.disk_usage(ARCHIVE).free < reserve + min(quota * .05, 1_000_000_000)
     for end, cid, sid, prepared, raw_folder in sorted(candidates):
+        cutoff = now - retention_days(policy, cid) * 86400
         if end >= cutoff and not pressured:
             continue
         source = ARCHIVE / raw_folder / (sid + '.mp4')
@@ -108,6 +109,7 @@ def clean_archive(settings, active, now=None):
         pressured = used > target or shutil.disk_usage(ARCHIVE).free < reserve + min(quota * .05, 1_000_000_000)
     # Previews can outlive incomplete/corrupt segments; their age still follows the same policy.
     for path in (ARCHIVE / '.previews').glob('*/*.jpg'):
+        cutoff = now - retention_days(policy, path.parent.name) * 86400
         if path.stem.isdigit() and int(path.stem) < cutoff:
             path.unlink(missing_ok=True)
             used -= files.pop(path, 0)
@@ -168,38 +170,42 @@ def prepare(source, cid, settings, used_bytes=None):
 
 if __name__ == '__main__':
     failed, previous_preview = {}, {}
-    last_clean, last_settings, usage = 0, None, {}
+    last_clean, last_policy, usage = 0, None, {}
     while True:
         started = time.time()
+        online = set()
         try:
             value = state()
+            # Read source status even when archive IO is disabled.
+            with urlopen('http://127.0.0.1:9997/v3/paths/list', timeout=3) as response:
+                online = {p['name'] for p in json.load(response)['items'] if p.get('online', p.get('ready', False))}
             if not storage_available():
                 apply_media(value, paused=True)
                 raise RuntimeError('Archive directory unavailable; recording paused')
+            for path in (ARCHIVE / '.ready', ARCHIVE / '.previews'):
+                path.mkdir(exist_ok=True, mode=0o700)
             active = active_recordings()
             # Full accounting includes every preview, but scanning the entire tree every tick
             # would overload large HDD archives. Free-space protection still runs every tick.
-            if time.monotonic() - last_clean >= 30 or last_settings != value['settings']:
+            if time.monotonic() - last_clean >= 30 or last_policy != value:
                 with locked():
                     usage = clean_archive(value['settings'], active)
-                last_clean, last_settings = time.monotonic(), dict(value['settings'])
+                last_clean, last_policy = time.monotonic(), value
             usage['free_bytes'] = shutil.disk_usage(ARCHIVE).free
             if usage['free_bytes'] < value['settings']['reserve_gb'] * 1_000_000_000:
                 usage.update(paused=True, reason='Недостаточно места для записи')
             apply_media(value, paused=usage['paused'])
             configured_ids = {c['id'] + '-' + quality for c in value['cameras'] for quality in c['streams']}
-            for stale in (ARCHIVE / '.snapshots').glob('*.jpg'):
-                if stale.stem not in configured_ids:
-                    stale.unlink(missing_ok=True)
-                    stale.with_suffix('.json').unlink(missing_ok=True)
-            # Polling is for camera truth, not for deciding whether an MP4 has closed.
-            with urlopen('http://127.0.0.1:9997/v3/paths/list', timeout=3) as response:
-                online = {p['name'] for p in json.load(response)['items'] if p.get('online', p.get('ready', False))}
+            for folder in (SNAPSHOTS, LAST_FRAMES):
+                for stale in folder.glob('*.jpg'):
+                    if stale.stem not in configured_ids:
+                        stale.unlink(missing_ok=True)
+                        stale.with_suffix('.json').unlink(missing_ok=True)
             if not usage['paused']:
                 for camera in value['cameras']:
                     cid = camera['id']
                     name = cid + ('-hd' if 'hd' in camera['streams'] else '-sd')
-                    snapshot = ARCHIVE / '.snapshots' / (name + '.jpg')
+                    snapshot = SNAPSHOTS / (name + '.jpg')
                     if camera['record'] and name in online and snapshot.is_file():
                         modified = snapshot.stat().st_mtime
                         bucket = int(modified // 15) * 15
@@ -251,5 +257,7 @@ if __name__ == '__main__':
             # Do not log exception text from external processes (may contain credentials).
             logging.warning('Archive iteration failed (%s)', type(error).__name__)
             atomic_json(DATA / 'worker.json', {'checked_at': time.time(), 'ok': False,
-                        'paused': True, 'reason': 'Архив недоступен; проверьте хранилище и MediaMTX'})
+                        'paused': True, 'online': sorted(online),
+                        'reason': 'Архив недоступен. Запись приостановлена.'})
+            last_clean, last_policy = 0, None
         time.sleep(max(.1, 3 - (time.time() - started)))

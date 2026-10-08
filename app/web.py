@@ -18,7 +18,7 @@ from flask import Flask, Response, abort, jsonify, redirect, render_template, re
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 from core import (DATA, ARCHIVE, PUBLIC_URL, CAMERA_ID, STREAM_ID, SEGMENT_ID, state, locked,
-                  atomic_json, storage_available, entries)
+                  atomic_json, storage_available, entries, retention_days, snapshot_status)
 
 from previews import preview_size
 
@@ -62,7 +62,7 @@ def home():
 
 @app.route('/healthz')
 def health():
-    return jsonify(status='ok', version='0.3.3')
+    return jsonify(status='ok', version='0.3.5')
 
 
 @app.route('/admin/')
@@ -82,6 +82,12 @@ def index():
     for camera in value['cameras']:
         available = sum(camera['id'] + '-' + q in usage.get('online', []) for q in camera['streams'])
         statuses[camera['id']] = 'online' if available == len(camera['streams']) else 'partial' if available else 'offline'
+    snapshots = {}
+    for camera in value['cameras']:
+        for quality in camera['streams']:
+            name = camera['id'] + '-' + quality
+            _, live, stamp = snapshot_status(name)
+            snapshots[name] = {'live': live, 'time': datetime.fromtimestamp(stamp, timezone.utc).isoformat() if stamp else None}
     edit_streams = {}
     if editing:
         for quality, stream in editing['streams'].items():
@@ -89,7 +95,7 @@ def index():
             edit_streams[quality] = {'rtsp': urlunsplit((url.scheme, url.netloc.rsplit('@', 1)[-1], url.path, url.query, url.fragment)),
                                      'username': unquote(url.username or ''), 'password': unquote(url.password or '')}
     return render_template('index.html', value=value, usage=usage, editing=editing, edit_streams=edit_streams,
-                           host_path=os.environ.get('ARCHIVE_HOST_PATH', './archive'), groups=groups, view=view, statuses=statuses)
+                           host_path=os.environ.get('ARCHIVE_HOST_PATH', './archive'), groups=groups, view=view, statuses=statuses, snapshots=snapshots)
 
 
 @app.route('/admin/group/rename', methods=['POST'])
@@ -127,8 +133,8 @@ def settings():
             value['settings'] = updated
             atomic_json(DATA / 'state.json', value)
     except (ValueError, KeyError):
-        return redirect(url_for('index', view='storage', error='Укажите корректные положительные значения: срок 1–3650 дней, объёмы от 1 ГБ'))
-    return redirect(url_for('index', view='storage', message='Настройки сохранены; применятся автоматически'))
+        return redirect(url_for('index', view='storage', error='Срок: 1–3650 дней. Объём и резерв: от 1 ГБ.'))
+    return redirect(url_for('index', view='storage', message='Настройки сохранены'))
 
 
 @app.route('/admin/camera', methods=['POST'])
@@ -143,6 +149,16 @@ def camera_save():
     camera = {'id': cid, 'name': request.form.get('name', '').strip()[:120] or cid,
               'group': request.form.get('group', '').strip()[:80],
               'streams': {}, 'record': request.form.get('record') == 'on'}
+    raw_retention = request.form.get('retention_days', (previous or {}).get('retention_days', ''))
+    try:
+        if raw_retention not in ('', None):
+            days = float(raw_retention)
+            if not math.isfinite(days) or not 1 <= days <= 3650 or not days.is_integer():
+                raise ValueError()
+            camera['retention_days'] = int(days)
+    except (ValueError, TypeError):
+        return redirect(url_for('index', edit=cid if previous else None,
+                                error='Срок хранения камеры: целое число от 1 до 3650 дней или пустое поле для общей настройки'))
     generated, committed = [], False
     try:
         for quality in ('hd', 'sd'):
@@ -214,6 +230,11 @@ def camera_save():
             current = next((c for c in value['cameras'] if c['id'] == cid), None)
             if current != previous:
                 return redirect(url_for('index', error='Камера уже изменена в другой вкладке. Обновите страницу'))
+            old_days = retention_days(value, cid)
+            new_days = camera.get('retention_days') or value['settings']['retention_days']
+            if current and new_days < old_days and request.form.get('confirm_delete') != 'yes':
+                return redirect(url_for('index', edit=cid,
+                                        error='Подтвердите удаление записей старше нового срока хранения'))
             value['cameras'] = [c for c in value['cameras'] if c['id'] != cid] + [camera]
             atomic_json(DATA / 'state.json', value)
             committed = True
@@ -223,7 +244,7 @@ def camera_save():
         if not committed:
             for path in generated:
                 path.unlink(missing_ok=True)
-    return redirect(url_for('index', message='Камера сохранена; потоки применятся автоматически'))
+    return redirect(url_for('index', message='Камера сохранена'))
 
 
 @app.route('/admin/delete/<cid>', methods=['POST'])
@@ -234,7 +255,7 @@ def camera_delete(cid):
         value = state()
         value['cameras'] = [c for c in value['cameras'] if c['id'] != cid]
         atomic_json(DATA / 'state.json', value)
-    return redirect(url_for('index', message='Камера удалена. Её записи будут очищены по сроку и лимиту хранения'))
+    return redirect(url_for('index', message='Камера удалена. Архив сохранён до плановой очистки'))
 
 
 @app.route('/<cid>-<quality>/')
@@ -247,12 +268,15 @@ def live_player(cid, quality):
     # MediaMTX serves a generic player even for unknown paths; validate before showing it.
     try:
         with urlopen('http://127.0.0.1:8889/' + cid + '-' + quality + '/', timeout=5) as response:
-            return Response(response.read(), mimetype='text/html')
+            html = response.read().decode('utf-8')
+            status = render_template('live_status.html', name=cid + '-' + quality)
+            return Response(html.replace('</body>', status + '</body>'), mimetype='text/html')
     except URLError:
         abort(503)
 
 
 @app.route('/<name>.jpg/', strict_slashes=False)
+@app.route('/<name>.jpg/status/')
 def snapshot(name):
     match = STREAM_ID.fullmatch(name)
     if not match:
@@ -261,17 +285,18 @@ def snapshot(name):
     camera = next((c for c in state()['cameras'] if c['id'] == cid), None)
     if not camera or quality not in camera['streams']:
         abort(404)
-    if not storage_available():
-        abort(503)
-    path = ARCHIVE / '.snapshots' / (name + '.jpg')
-    try:
-        heartbeat = json.loads(path.with_suffix('.json').read_text())
-        # Up to 30 seconds between keyframes; a stopped receiver expires after five seconds.
-        if time.time() - heartbeat['checked_at'] > 5 or time.time() - path.stat().st_mtime > 30:
-            abort(404, description='Live snapshot is unavailable')
-    except (OSError, ValueError, KeyError):
-        abort(404, description='Live snapshot is unavailable')
-    return send_file(path, mimetype='image/jpeg', conditional=True, max_age=1)
+    path, live, stamp = snapshot_status(name)
+    if request.path.endswith('/status/'):
+        return jsonify(live=live, has_image=path is not None, captured_at=stamp,
+                       url='/' + name + '.jpg/'), 200, {'Cache-Control': 'no-store'}
+    if path is None:
+        abort(404, description='No camera frame has been received yet')
+    response = send_file(path, mimetype='image/jpeg', conditional=True, max_age=1)
+    # Keep the JPEG URL compatible; consumers may read freshness without parsing pixels.
+    response.headers['X-DvorCam-Snapshot-State'] = 'live' if live else 'fallback'
+    response.headers['X-DvorCam-Captured-At'] = str(stamp)
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 def archive_segments(cam_id):
@@ -281,7 +306,7 @@ def archive_segments(cam_id):
         rows = entries(cam_id)
     except (OSError, ValueError):
         abort(503, description='Archive index is unavailable')
-    cutoff = time.time() - state()['settings']['retention_days'] * 86400
+    cutoff = time.time() - retention_days(state(), cam_id) * 86400
     return [row for row in rows if row['end'] > cutoff]
 
 
@@ -292,7 +317,7 @@ def archive(cam_id, action=None):
     if not camera or not CAMERA_ID.fullmatch(cam_id):
         abort(404)
     if action is None:
-        return render_template('archive.html', camera=camera, retention=state()['settings']['retention_days'] * 86400)
+        return render_template('archive.html', camera=camera, retention=retention_days(state(), cam_id) * 86400)
     if action == 'list' and request.path.startswith('/admin/'):
         return jsonify([{'start': datetime.fromtimestamp(s['start'], timezone.utc).isoformat(),
                          'duration': s['duration']} for s in archive_segments(cam_id)])
@@ -311,7 +336,7 @@ def archive(cam_id, action=None):
         abort(404)
     try:
         stamp = float(request.args['time'])
-        if not math.isfinite(stamp) or not time.time() - state()['settings']['retention_days'] * 86400 <= stamp <= time.time():
+        if not math.isfinite(stamp) or not time.time() - retention_days(state(), cam_id) * 86400 <= stamp <= time.time():
             raise ValueError()
     except (ValueError, KeyError):
         abort(400)
@@ -329,7 +354,7 @@ def archive_metadata(cam_id):
     if not camera or not re.fullmatch(r"[A-Za-z0-9_-]+", cam_id):
         abort(404)
     now = time.time()
-    retention = state()['settings']['retention_days'] * 86400
+    retention = retention_days(state(), cam_id) * 86400
     try:
         start = float(request.args.get("start", now - retention))
         end = float(request.args.get("end", now))

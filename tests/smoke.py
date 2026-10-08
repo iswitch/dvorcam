@@ -5,6 +5,8 @@ import json
 from io import BytesIO
 from PIL import Image
 import re
+import os
+import subprocess
 import time
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -31,6 +33,10 @@ if __name__ == '__main__':
     else:
         raise SystemExit('Gateway did not become ready')
     assert 'Камер пока нет' in page, 'Run on fresh smoke volumes only'
+    container = os.environ.get('DVORCAM_TEST_PROJECT', 'dvorcam-smoke') + '-dvorcam-1'
+    # These are disposable test volumes, not a production mountpoint.
+    subprocess.run(['docker', 'exec', container, 'chown', '1000:1000', '/archive'], check=True)
+    subprocess.run(['docker', 'exec', '-u', '1000:1000', container, 'python', '/app/prepare_storage.py'], check=True)
     # The camera form is a separate page; the empty list intentionally has no writable form.
     form_page = fetch('/admin/?new=1').decode()
     token = re.search(r'name="csrf" value="([^"]+)"', form_page)[1]
@@ -42,6 +48,8 @@ if __name__ == '__main__':
     time.sleep(18)
     jpeg = fetch('/synthetic-hd.jpg/')
     assert jpeg[:2] == b'\xff\xd8'
+    status = json.loads(fetch('/synthetic-hd.jpg/status/'))
+    assert status['live'] and status['has_image']
     print('PASS: live JPEG from the synthetic RTSP camera', flush=True)
     fetch('/admin/camera', {'csrf': token, 'id': 'synthetic', 'editing': 'synthetic', 'name': 'Synthetic test camera'})
     for _ in range(30):

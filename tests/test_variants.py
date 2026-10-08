@@ -41,7 +41,7 @@ def test_variants_record_only_selected_source_and_group_admin(installation, monk
         path = config['paths']['entrance-' + quality]
         assert path['record'] is (quality == selected)
         assert path['recordPath'] == str(core.ARCHIVE / '%path/%Y-%m-%d_%H-%M-%S-%f')
-        assert path['runOnAvailable'] == 'python /app/snapshot.py entrance-' + quality
+        assert path['runOnOnline'] == 'python /app/snapshot.py entrance-' + quality
         assert not path['alwaysAvailableRecorded']
         assert not core.media_config(core.state(), paused=True)['paths']['entrance-' + quality]['record']
         source = config['paths']['entrance-' + quality + '-source']
@@ -81,7 +81,7 @@ def test_long_gop_snapshot_expiry_is_separate_from_receiver_heartbeat(installati
     value = core.state()
     value['cameras'] = [{'id': 'cam', 'streams': {'sd': {}}}]
     core.atomic_json(core.DATA / 'state.json', value)
-    image = core.ARCHIVE / '.snapshots/cam-sd.jpg'
+    image = core.SNAPSHOTS / 'cam-sd.jpg'
     image.write_bytes(b'jpeg')
     now = time.time()
     os.utime(image, (now - 15, now - 15))

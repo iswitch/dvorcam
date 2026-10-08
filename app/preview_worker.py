@@ -6,7 +6,7 @@ import os
 import subprocess
 import time
 
-from core import DATA, ARCHIVE, CAMERA_ID, SEGMENT_ID, atomic_json, entries, locked, state
+from core import DATA, ARCHIVE, CAMERA_ID, SEGMENT_ID, atomic_json, entries, locked, state, retention_days
 from previews import make_preview, preview_size, preview_writable, valid_preview
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
@@ -49,7 +49,7 @@ if __name__ == '__main__':
                         start, end = float(row['start']), float(row['end'])
                         if not all(math.isfinite(x) for x in (start, end)) or end <= start:
                             continue
-                        cutoff = time.time() - state()['settings']['retention_days'] * 86400
+                        cutoff = time.time() - retention_days(state(), folder.name) * 86400
                         if end <= cutoff or not source.is_file() or source.is_symlink():
                             continue
                         seen_sources.add(source)

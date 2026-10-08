@@ -3,14 +3,21 @@ import os
 import sys
 import time
 import zlib
+import shutil
 
 import av
-from core import ARCHIVE, STREAM_ID, atomic_json, storage_available
+from core import SNAPSHOTS, LAST_FRAMES, STREAM_ID, atomic_json
 
 cid = sys.argv[1]
-if not STREAM_ID.fullmatch(cid) or not storage_available():
+if not STREAM_ID.fullmatch(cid):
     raise SystemExit(1)
-target = ARCHIVE / '.snapshots' / (cid + '.jpg')
+target = SNAPSHOTS / (cid + '.jpg')
+saved = LAST_FRAMES / (cid + '.jpg')
+saved_temporary = saved.with_suffix('.jpg.tmp')
+try:
+    next_save = time.monotonic() + max(0, 30 - (time.time() - saved.stat().st_mtime))
+except OSError:
+    next_save = 0
 temporary = target.with_suffix('.jpg.tmp')
 try:
     with av.open('rtsp://127.0.0.1:8554/' + cid, options={'rtsp_transport': 'tcp'},
@@ -25,8 +32,6 @@ try:
         for packet in source.demux(video):
             now = time.monotonic()
             if now >= next_heartbeat:
-                if not storage_available():
-                    raise SystemExit(1)
                 # Packet freshness is separate from JPEG age: long GOPs are not source failure.
                 atomic_json(target.with_suffix('.json'), {'checked_at': time.time()})
                 next_heartbeat = now + 1
@@ -40,6 +45,26 @@ try:
                     image.save(temporary, format='JPEG', quality=80)
                 os.replace(temporary, target)
                 next_snapshot = now + 1
+                if now >= next_save:
+                    # Persist at most once in 30 s, without coupling live to archive/disk failures.
+                    next_save = now + 30
+                    try:
+                        shutil.copyfile(target, saved_temporary)
+                        os.utime(saved_temporary, ns=(target.stat().st_mtime_ns,) * 2)
+                        with saved_temporary.open('rb') as output:
+                            os.fsync(output.fileno())
+                        os.replace(saved_temporary, saved)
+                        fd = os.open(LAST_FRAMES, os.O_RDONLY)
+                        try:
+                            os.fsync(fd)
+                        finally:
+                            os.close(fd)
+                    except OSError:
+                        try:
+                            saved_temporary.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                        print('Snapshot fallback write failed; live continues', flush=True)
 except (av.FFmpegError, OSError) as error:
     print('Snapshot stopped: ' + type(error).__name__, file=sys.stderr)
     raise SystemExit(1)

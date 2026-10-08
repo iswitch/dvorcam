@@ -238,7 +238,7 @@ def test_snapshot_aliases_share_public_access_and_freshness(installation, cid):
     for url in urls:
         assert client.get(url).status_code == 404
 
-    image = core.ARCHIVE / '.snapshots' / (cid + '-sd.jpg')
+    image = core.SNAPSHOTS / (cid + '-sd.jpg')
     core.atomic_json(image.with_suffix('.json'), {'checked_at': time.time()})
     image.write_bytes(b'\xff\xd8snapshot\xff\xd9')
     for url in urls:
@@ -247,7 +247,7 @@ def test_snapshot_aliases_share_public_access_and_freshness(installation, cid):
         assert response.data == image.read_bytes()
         assert response.mimetype == 'image/jpeg'
         assert response.headers.get('Location') is None
-        assert response.headers['Cache-Control'] == 'public, max-age=1'
+        assert response.headers['Cache-Control'] == 'no-store'
         head = client.head(url)
         assert head.status_code == 200 and head.data == b''
         assert head.content_length == image.stat().st_size
@@ -259,7 +259,7 @@ def test_snapshot_aliases_share_public_access_and_freshness(installation, cid):
     os.utime(image, None)
     (core.ARCHIVE / '.dvorcam-storage').unlink()
     for url in urls:
-        assert client.get(url).status_code == 503
+        assert client.get(url).status_code == 200
     for url in ('/unknown.jpg', '/snapshots/unknown.jpg', '/bad.id.jpg'):
         assert client.get(url).status_code == 404
     for url in ('/', '/admin', '/admin/', '/admin/archive/' + cid + '/'):
