@@ -210,7 +210,8 @@ def test_camera_probe_is_required_and_credentials_only_rendered_in_edit_form(ins
     assert camera['streams']['sd']['rtsp'] == 'rtsp://user:p%40ss%3A%24%23@192.0.2.1:554/video'
     assert camera['record'] is True
     assert (core.DATA / 'fallback' / camera['streams']['sd']['fallback_file']).is_file()
-    assert calls[1][calls[1].index('-i') + 1].startswith('color=')
+    # Placeholder encoding reads a bundled local asset, never the camera RTSP URL.
+    assert Path(calls[1][calls[1].index('-i') + 1]).is_file()
     html = client.get('/admin/?edit=entry', headers=AUTH).text
     assert 'value="p@ss:$#"' in html and 'type="password"' in html
     listing = client.get('/admin/', headers=AUTH).text

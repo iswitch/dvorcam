@@ -21,6 +21,7 @@ from core import (DATA, ARCHIVE, PUBLIC_URL, CAMERA_ID, STREAM_ID, SEGMENT_ID, s
                   atomic_json, storage_available, entries, retention_days, snapshot_status)
 
 from previews import preview_size
+from fallback import REVISION as FALLBACK_REVISION, generate_fallback
 
 app = Flask(__name__)
 # The HTTP port is private; only our gateway forwards these headers.
@@ -62,7 +63,7 @@ def home():
 
 @app.route('/healthz')
 def health():
-    return jsonify(status='ok', version='0.3.5')
+    return jsonify(status='ok', version='0.3.6')
 
 
 @app.route('/admin/')
@@ -210,18 +211,10 @@ def camera_save():
                 raise ValueError()
             stream = {'rtsp': rtsp, 'video': video, 'has_audio': any(v['codec_type'] == 'audio' for v in streams)}
             target = DATA / 'fallback' / (cid + '-' + quality + '-' + secrets.token_hex(6) + '.mp4')
-            temporary = target.with_suffix('.tmp.mp4')
-            generated.extend((temporary, target))
-            profile = {'Constrained Baseline': 'baseline', 'Baseline': 'baseline', 'Main': 'main', 'High': 'high'}.get(video.get('profile'), 'main')
-            # The placeholder is encoded once; stream delivery and recording use the original video.
-            subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-f', 'lavfi', '-i',
-                f"color=c=black:s={video['width']}x{video['height']}:r={video['r_frame_rate']}",
-                '-t', '2', '-vf', 'drawtext=text=NO SIGNAL:fontcolor=white:fontsize=48:x=(w-tw)/2:y=(h-th)/2',
-                '-c:v', 'libx264', '-profile:v', profile, '-pix_fmt', 'yuv420p', '-bf', '0',
-                '-g', str(max(1, round(rate))), '-threads', '1', '-movflags', '+faststart',
-                '-an', '-y', str(temporary)], capture_output=True, timeout=45, check=True)
-            os.replace(temporary, target)
+            generated.append(target)
+            generate_fallback(video, target)
             stream['fallback_file'] = target.name
+            stream['fallback_revision'] = FALLBACK_REVISION
             camera['streams'][quality] = stream
         if not camera['streams']:
             return redirect(url_for('index', error='Добавьте хотя бы один RTSP-поток: HD или SD'))

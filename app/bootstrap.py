@@ -2,8 +2,11 @@
 import os
 import uuid
 import re
+import secrets
+import subprocess
 from urllib.parse import urlsplit
-from core import DATA, ARCHIVE, PUBLIC_URL, DEFAULT_SETTINGS, SNAPSHOTS, LAST_FRAMES, storage_available, atomic_json, atomic_write, state, apply_media
+from core import DATA, ARCHIVE, PUBLIC_URL, DEFAULT_SETTINGS, SNAPSHOTS, LAST_FRAMES, storage_available, atomic_json, atomic_write, state, apply_media, locked
+from fallback import REVISION as FALLBACK_REVISION, generate_fallback
 
 url = urlsplit(PUBLIC_URL)
 if url.scheme not in ('https', 'http') or not url.hostname or url.username or url.query or url.fragment or url.path:
@@ -47,5 +50,27 @@ try:
 except OSError:
     # A mounted but failing/read-only disk must not prevent live/admin startup either.
     print('Archive IO unavailable; live starts with recording paused', flush=True)
-apply_media(state(), paused=True)
+# Update old placeholders without probing offline cameras or touching recordings.
+# Keep old MP4s for rollback; publish new names only after successful encoding.
+with locked():
+    value = state()
+    changed = False
+    for camera in value['cameras']:
+        for quality, stream in camera['streams'].items():
+            if (stream.get('fallback_revision') == FALLBACK_REVISION
+                    and (DATA / 'fallback' / stream['fallback_file']).is_file()):
+                continue
+            target = DATA / 'fallback' / (camera['id'] + '-' + quality + '-' + secrets.token_hex(6) + '.mp4')
+            try:
+                generate_fallback(stream['video'], target)
+            except (subprocess.SubprocessError, OSError, ValueError, KeyError, TypeError, ZeroDivisionError):
+                # A failed update keeps the existing fallback and does not block live startup.
+                print(f"Placeholder update failed: {camera['id']}-{quality}; previous retained", flush=True)
+                continue
+            stream['fallback_file'] = target.name
+            stream['fallback_revision'] = FALLBACK_REVISION
+            changed = True
+    if changed:
+        atomic_json(DATA / 'state.json', value)
+apply_media(value, paused=True)
 print('DvorCam initialized; cameras and archive retained', flush=True)

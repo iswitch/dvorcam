@@ -20,17 +20,18 @@ os.environ.update(DVORCAM_DATA=str(work / 'data'), DVORCAM_ARCHIVE=str(work / 'a
                   ADMIN_USERNAME='admin', ADMIN_PASSWORD='local-smoke-password')
 sys.path.insert(0, str(root / 'app'))
 import core
+from fallback import REVISION, generate_fallback
 
 for path in (core.DATA / 'runtime', core.DATA / 'fallback', core.LAST_FRAMES, core.SNAPSHOTS, core.ARCHIVE):
     path.mkdir(parents=True, exist_ok=True)
 core.atomic_write(core.DATA / 'storage-id', 'native-storage')
 core.atomic_write(core.ARCHIVE / '.dvorcam-storage', 'native-storage')
 fallback = core.DATA / 'fallback/cam.mp4'
-subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=black:size=320x180:rate=10',
-                '-t', '2', '-c:v', 'libx264', '-bf', '0', '-g', '10', '-threads', '1', str(fallback)], check=True)
+generate_fallback({'width': 320, 'height': 180, 'r_frame_rate': '10/1', 'profile': 'Main'}, fallback)
 value = {'version': 2, 'settings': dict(core.DEFAULT_SETTINGS), 'cameras': [
     {'id': 'cam', 'name': 'Native camera', 'record': True, 'streams': {'sd': {
-        'rtsp': 'rtsp://127.0.0.1:18554/test', 'fallback_file': fallback.name}}}]}
+        'rtsp': 'rtsp://127.0.0.1:18554/test', 'fallback_file': fallback.name, 'fallback_revision': REVISION,
+        'video': {'width': 320, 'height': 180, 'r_frame_rate': '10/1', 'profile': 'Main'}}}}]}
 core.atomic_json(core.DATA / 'state.json', value)
 core.apply_media(value, paused=True)  # Validate the actual app configuration with the pinned binary.
 config = core.media_config(value, paused=False)
@@ -105,6 +106,16 @@ try:
     time.sleep(3)
     assert hashlib.sha256(client.get('/cam-sd.jpg/').data).hexdigest() == saved_digest
     print('PASS source loss -> persistent real frame; NO SIGNAL never overwrites it', flush=True)
+    # Read several complete loops from MediaMTX, not just the generated MP4.
+    raw = subprocess.run(['ffmpeg', '-v', 'error', '-rtsp_transport', 'tcp',
+        '-i', 'rtsp://127.0.0.1:8554/cam-sd', '-t', '5', '-an', '-pix_fmt', 'rgb24',
+        '-f', 'rawvideo', '-'], capture_output=True, check=True, timeout=20).stdout
+    frame_bytes = 320 * 180 * 3
+    assert len(raw) >= frame_bytes * 40 and len(raw) % frame_bytes == 0
+    digests = {hashlib.sha256(raw[start:start + frame_bytes]).hexdigest()
+               for start in range(0, len(raw), frame_bytes)}
+    assert len(digests) > 3
+    print('PASS animated fallback decodes across MediaMTX loop boundaries', flush=True)
     media.terminate()
     media.wait(timeout=10)
     shutil.rmtree(core.SNAPSHOTS)
